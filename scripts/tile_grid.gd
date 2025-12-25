@@ -14,11 +14,7 @@ enum Zone { BASE, FOREST, CAVE, CRYSTAL, VOLCANO, ABYSS }
 
 var grid_resources: Array[Array] = []
 var grid_zones: Array[Array] = []
-var grid_turrets: Array[Array] = []  # Turret placement
 var resource_scene: PackedScene
-var show_turret_placement: bool = false  # Show valid placement indicators
-var placing_turret_type: Turret.TurretType = Turret.TurretType.ARROW  # Type being placed
-var hover_grid_pos: Vector2i = Vector2i(-1, -1)  # Current hover position for range display
 
 var unlocked_zones: Dictionary = {
 	Zone.BASE: true,
@@ -63,15 +59,6 @@ var zone_names: Dictionary = {
 	Zone.ABYSS: "Abyss",
 }
 
-# Enemy spawn rates per zone (higher = more dangerous)
-var zone_danger: Dictionary = {
-	Zone.FOREST: 1,
-	Zone.CAVE: 2,
-	Zone.CRYSTAL: 3,
-	Zone.VOLCANO: 4,
-	Zone.ABYSS: 5,
-}
-
 func _ready() -> void:
 	resource_scene = preload("res://scenes/resource_pickup.tscn")
 	_init_grid()
@@ -81,17 +68,13 @@ func _ready() -> void:
 func _init_grid() -> void:
 	grid_resources.clear()
 	grid_zones.clear()
-	grid_turrets.clear()
 	for x in GRID_SIZE.x:
 		var res_column: Array = []
 		var zone_column: Array = []
-		var turret_column: Array = []
 		res_column.resize(GRID_SIZE.y)
 		zone_column.resize(GRID_SIZE.y)
-		turret_column.resize(GRID_SIZE.y)
 		grid_resources.append(res_column)
 		grid_zones.append(zone_column)
-		grid_turrets.append(turret_column)
 
 func _setup_zones() -> void:
 	# Setup zones with curved boundaries around base
@@ -153,52 +136,6 @@ func _draw() -> void:
 	
 	# Draw zone boundaries with curves
 	_draw_curved_zone_boundaries()
-	
-	# Draw turret placement indicators
-	if show_turret_placement:
-		_draw_turret_placement_indicators()
-		# Draw attack range at hover position
-		if hover_grid_pos.x >= 0:
-			_draw_turret_range_indicator()
-
-func _draw_turret_placement_indicators() -> void:
-	# Show valid/invalid placement areas for turrets
-	for x in GRID_SIZE.x:
-		for y in GRID_SIZE.y:
-			var grid_pos = Vector2i(x, y)
-			var rect = Rect2(Vector2(x, y) * CELL_SIZE, Vector2(CELL_SIZE, CELL_SIZE))
-			
-			# Check if cell is valid and accessible
-			if not is_valid_cell(grid_pos):
-				continue
-			
-			if is_base_area(grid_pos):
-				# Invalid: base area (red tint)
-				draw_rect(rect, Color(1.0, 0.0, 0.0, 0.3))
-			elif get_turret_at(grid_pos) != null:
-				# Invalid: already has turret (orange tint)
-				draw_rect(rect, Color(1.0, 0.5, 0.0, 0.3))
-			elif not is_cell_accessible(grid_pos):
-				# Invalid: locked zone (dark red tint)
-				draw_rect(rect, Color(0.5, 0.0, 0.0, 0.3))
-			else:
-				# Valid placement (green tint)
-				draw_rect(rect, Color(0.0, 1.0, 0.0, 0.2))
-
-func _draw_turret_range_indicator() -> void:
-	# Draw attack range circle at hover position
-	if hover_grid_pos.x < 0 or hover_grid_pos.y < 0:
-		return
-	
-	# grid_to_world returns local coordinates (relative to TileGrid)
-	var local_pos = grid_to_world(hover_grid_pos)
-	var stats = Turret.type_stats.get(placing_turret_type, Turret.type_stats[Turret.TurretType.ARROW])
-	var range_val = stats["range"]
-	var color = stats["color"]
-	
-	# Draw range circle (drawing is already in local space)
-	draw_arc(local_pos, range_val, 0, TAU, 64, Color(color.r, color.g, color.b, 0.3), 2.0)
-	draw_circle(local_pos, range_val, Color(color.r, color.g, color.b, 0.1))
 
 func _draw_curved_zone_boundaries() -> void:
 	# Draw subtle boundary lines between unlocked zones only
@@ -252,9 +189,6 @@ func get_zone_price(zone: Zone) -> int:
 func get_zone_name(zone: Zone) -> String:
 	return zone_names.get(zone, "Unknown")
 
-func get_zone_danger(zone: Zone) -> int:
-	return zone_danger.get(zone, 1)
-
 func grid_to_world(grid_pos: Vector2i) -> Vector2:
 	return Vector2(grid_pos) * CELL_SIZE + Vector2(CELL_SIZE, CELL_SIZE) / 2
 
@@ -285,28 +219,6 @@ func get_resource_at(grid_pos: Vector2i) -> ResourcePickup:
 	if not is_valid_cell(grid_pos):
 		return null
 	return grid_resources[grid_pos.x][grid_pos.y]
-
-func get_turret_at(grid_pos: Vector2i) -> Node2D:
-	if not is_valid_cell(grid_pos):
-		return null
-	return grid_turrets[grid_pos.x][grid_pos.y]
-
-func place_turret(grid_pos: Vector2i, turret: Node2D) -> bool:
-	if not is_valid_cell(grid_pos):
-		return false
-	if grid_turrets[grid_pos.x][grid_pos.y] != null:
-		return false
-	grid_turrets[grid_pos.x][grid_pos.y] = turret
-	# Store grid position in turret for cleanup
-	if turret.has_method("set_grid_position"):
-		turret.set_grid_position(grid_pos)
-	elif turret.has("grid_position"):
-		turret.grid_position = grid_pos
-	return true
-
-func remove_turret_at(grid_pos: Vector2i) -> void:
-	if is_valid_cell(grid_pos):
-		grid_turrets[grid_pos.x][grid_pos.y] = null
 
 func spawn_resource(grid_pos: Vector2i, tier: int = 0) -> bool:
 	if not is_valid_cell(grid_pos):
@@ -384,54 +296,6 @@ func get_random_cell_in_zone(zone: Zone) -> Vector2i:
 	if cells.is_empty():
 		return Vector2i(-1, -1)
 	return cells[randi() % cells.size()]
-
-func get_edge_cells_in_zone(zone: Zone) -> Array[Vector2i]:
-	# Find cells at the edges of the zone (map boundaries or adjacent to different zones/locked areas)
-	var edge_cells: Array[Vector2i] = []
-	
-	for x in GRID_SIZE.x:
-		for y in GRID_SIZE.y:
-			if grid_zones[x][y] != zone:
-				continue
-			
-			var is_edge = false
-			
-			# Check if at map boundary
-			if x == 0 or x == GRID_SIZE.x - 1 or y == 0 or y == GRID_SIZE.y - 1:
-				is_edge = true
-			else:
-				# Check if adjacent to different zone or locked area
-				var neighbors = [
-					Vector2i(x - 1, y),  # Left
-					Vector2i(x + 1, y),  # Right
-					Vector2i(x, y - 1),  # Top
-					Vector2i(x, y + 1)   # Bottom
-				]
-				
-				for neighbor in neighbors:
-					if not is_valid_cell(neighbor):
-						is_edge = true
-						break
-					
-					var neighbor_zone = grid_zones[neighbor.x][neighbor.y]
-					var neighbor_unlocked = unlocked_zones.get(neighbor_zone, false)
-					
-					# Edge if adjacent to different zone or locked area
-					if neighbor_zone != zone or not neighbor_unlocked:
-						is_edge = true
-						break
-			
-			if is_edge:
-				edge_cells.append(Vector2i(x, y))
-	
-	return edge_cells
-
-func get_random_edge_cell_in_zone(zone: Zone) -> Vector2i:
-	var edge_cells = get_edge_cells_in_zone(zone)
-	if edge_cells.is_empty():
-		# Fallback to any cell in zone if no edges found
-		return get_random_cell_in_zone(zone)
-	return edge_cells[randi() % edge_cells.size()]
 
 func get_grid_pixel_size() -> Vector2:
 	return Vector2(GRID_SIZE) * CELL_SIZE

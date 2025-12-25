@@ -3,9 +3,8 @@ extends Node2D
 ## Automated collector that picks up resources and deposits them
 
 signal deposited_resource(tier: int)
-signal died()
 
-enum State { IDLE, MOVING_TO_RESOURCE, MOVING_TO_BASE, FLEEING, RETURNING_TO_BASE }
+enum State { IDLE, MOVING_TO_RESOURCE, MOVING_TO_BASE }
 
 const MOVE_SPEED := 100.0
 var speed_multiplier: float = 1.0
@@ -14,53 +13,35 @@ const DEPOSIT_DISTANCE := 30.0
 
 @export var assigned_zone: TileGrid.Zone = TileGrid.Zone.FOREST
 @export var bot_color: Color = Color("#22c55e")
-@export var max_health: float = 50.0
 
-var health: float
 var state: State = State.IDLE
 var target_position: Vector2
 var carried_resource: int = -1
 var grid_ref: TileGrid
 var base_ref: Base
-var main_ref: Node2D = null  # Reference to main game controller to check wave status
+var main_ref: Node2D = null  # Reference to main game controller
 var idle_timer := 0.0
 
 const IDLE_WAIT := 0.5
 
 func _ready() -> void:
-	health = max_health
 	queue_redraw()
 
 func _process(delta: float) -> void:
 	match state:
 		State.IDLE:
 			_process_idle(delta)
-		State.MOVING_TO_RESOURCE, State.MOVING_TO_BASE, State.FLEEING, State.RETURNING_TO_BASE:
+		State.MOVING_TO_RESOURCE, State.MOVING_TO_BASE:
 			_process_moving(delta)
 	queue_redraw()
 
 func _process_idle(delta: float) -> void:
-	# Don't look for resources if returning to base or during wave
-	if state == State.RETURNING_TO_BASE:
-		return
-	
-	# Check if wave is active - if so, stay at base
-	if _is_wave_active():
-		if position.distance_to(base_ref.position) > 50.0:
-			# Too far from base, return
-			return_to_base()
-		return
-	
 	idle_timer += delta
 	if idle_timer >= IDLE_WAIT:
 		idle_timer = 0.0
 		_find_resource_target()
 
 func _find_resource_target() -> void:
-	# Don't look for resources during waves
-	if _is_wave_active():
-		return
-	
 	if not grid_ref:
 		return
 	var resource_cell = grid_ref.find_resource_in_zone(assigned_zone)
@@ -84,11 +65,6 @@ func _on_reached_target() -> void:
 		_try_pickup()
 	elif state == State.MOVING_TO_BASE:
 		_try_deposit()
-	elif state == State.FLEEING:
-		state = State.IDLE
-	elif state == State.RETURNING_TO_BASE:
-		# Reached base, stay idle during wave
-		state = State.IDLE
 
 func _try_pickup() -> void:
 	if not grid_ref:
@@ -114,26 +90,6 @@ func _move_to_base() -> void:
 	target_position = slot_pos
 	state = State.MOVING_TO_BASE
 
-func return_to_base() -> void:
-	# Called when wave starts - return to base immediately
-	if not base_ref:
-		return
-	# If carrying resource, deposit it first
-	if carried_resource >= 0:
-		var slot_pos = base_ref.get_slot_world_position(carried_resource)
-		target_position = slot_pos
-		state = State.MOVING_TO_BASE
-	else:
-		# Just return to base center (stay close to base)
-		target_position = base_ref.position + Vector2(randf_range(-30, 30), randf_range(-30, 30))
-		state = State.RETURNING_TO_BASE
-
-func _is_wave_active() -> bool:
-	# Check if wave is active via main reference
-	if main_ref and "is_wave_active" in main_ref:
-		return main_ref.is_wave_active
-	return false
-
 func _try_deposit() -> void:
 	if not base_ref or carried_resource < 0:
 		state = State.IDLE
@@ -148,17 +104,6 @@ func _try_deposit() -> void:
 	
 	state = State.IDLE
 
-func take_damage(amount: float) -> void:
-	health -= amount
-	if health <= 0:
-		_die()
-
-func _die() -> void:
-	died.emit()
-	var tw = create_tween()
-	tw.tween_property(self, "scale", Vector2.ZERO, 0.2)
-	tw.tween_callback(queue_free)
-
 func _draw() -> void:
 	var size = 14.0
 	draw_rect(Rect2(-size/2, -size/2, size, size), bot_color)
@@ -171,14 +116,6 @@ func _draw() -> void:
 	# Eyes
 	draw_rect(Rect2(-4, -3, 3, 3), Color("#1e293b"))
 	draw_rect(Rect2(1, -3, 3, 3), Color("#1e293b"))
-	
-	# Health bar
-	var bar_width = size + 4
-	var bar_height = 3
-	var bar_y = size/2 + 3
-	var health_ratio = health / max_health
-	draw_rect(Rect2(-bar_width/2, bar_y, bar_width, bar_height), Color("#1e1e1e"))
-	draw_rect(Rect2(-bar_width/2, bar_y, bar_width * health_ratio, bar_height), Color("#22c55e"))
 	
 	# Carried resource
 	if carried_resource >= 0:

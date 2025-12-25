@@ -4,17 +4,12 @@ extends Node2D
 
 signal resource_deposited(tier: int, slot: int)
 signal resources_merged(new_tier: int)
-signal health_changed(current: float, maximum: float)
-signal base_destroyed()
 
 const SLOT_SIZE := 40.0  # Smaller slots to fit more
 const SLOTS_PER_ROW := 4
 const NUM_SLOTS := 12  # Increased tiers: 0-11
 const SLOT_SPACING := 4.0  # Less spacing
 const DEPOSIT_DISTANCE := 35.0
-
-@export var max_health: float = 500.0
-var health: float
 
 var slot_contents: Array[int] = []
 var slot_positions: Array[Vector2] = []
@@ -29,13 +24,10 @@ var tier_colors: Array[Color] = [
 ]
 
 func _ready() -> void:
-	health = max_health
 	slot_contents.resize(NUM_SLOTS)
 	slot_contents.fill(0)
 	_init_merge_requirements()
 	_calculate_slot_positions()
-	# Emit initial health to update UI
-	health_changed.emit(health, max_health)
 	queue_redraw()
 
 func _init_merge_requirements() -> void:
@@ -70,49 +62,16 @@ func _calculate_slot_positions() -> void:
 		)
 		slot_positions.append(pos)
 
-func take_damage(amount: float) -> void:
-	health -= amount
-	if health <= 0:
-		health = 0
-	health_changed.emit(health, max_health)
-	queue_redraw()
-	if health <= 0:
-		base_destroyed.emit()
-
-func heal(amount: float) -> void:
-	health = min(health + amount, max_health)
-	health_changed.emit(health, max_health)
-	queue_redraw()
-
-func upgrade_max_health(amount: float) -> void:
-	max_health += amount
-	health += amount  # Also heal by the same amount
-	health_changed.emit(health, max_health)
-	queue_redraw()
-
 func _draw() -> void:
 	var total_width = SLOTS_PER_ROW * SLOT_SIZE + (SLOTS_PER_ROW - 1) * SLOT_SPACING + 20
 	var total_rows = ceil(float(NUM_SLOTS) / SLOTS_PER_ROW)
 	var total_height = total_rows * SLOT_SIZE + (total_rows - 1) * SLOT_SPACING + 20
 	var bg_rect = Rect2(-total_width/2, -total_height/2, total_width, total_height)
 	
-	# Draw base background with rounded appearance
+	# Draw base background
 	var bg_color = Color("#334155")
-	if health < max_health * 0.3:
-		bg_color = Color("#7f1d1d")  # Red when low health
-	elif health < max_health * 0.6:
-		bg_color = Color("#92400e")  # Orange when medium health
-	
 	draw_rect(bg_rect, bg_color, false, 4.0)
 	draw_rect(bg_rect.grow(-2), Color("#1e293b", 0.95))
-	
-	# Draw health bar above base
-	var bar_width = total_width * 0.8
-	var bar_height = 6
-	var bar_y = -total_height/2 - 12
-	var health_ratio = health / max_health
-	draw_rect(Rect2(-bar_width/2, bar_y, bar_width, bar_height), Color("#1e1e1e"))
-	draw_rect(Rect2(-bar_width/2, bar_y, bar_width * health_ratio, bar_height), Color("#22c55e"))
 	
 	# Draw decorative border
 	var border_points = PackedVector2Array([
