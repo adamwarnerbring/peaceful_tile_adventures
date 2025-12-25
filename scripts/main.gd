@@ -1,9 +1,9 @@
 extends Node2D
 ## Main game controller - handles input, economy, and game state
 
-@onready var tile_grid: TileGrid = $TileGrid
-@onready var player: Player = $Player
-@onready var base: Base = $Base
+@onready var tile_grid = $TileGrid as TileGrid
+@onready var player = $Player as Player
+@onready var base = $Base as Base
 @onready var bots_container: Node2D = $Bots
 @onready var coin_label: Label = $UI/CoinLabel
 @onready var carry_label: Label = $UI/CarryLabel

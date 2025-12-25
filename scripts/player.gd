@@ -12,7 +12,7 @@ var base_move_speed: float = 180.0
 var target_position: Vector2
 var is_moving := false
 var carried_resource: int = -1
-var grid_ref: TileGrid
+var grid_ref  # TileGrid
 
 func _ready() -> void:
 	target_position = position

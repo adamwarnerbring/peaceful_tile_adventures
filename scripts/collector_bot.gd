@@ -17,8 +17,8 @@ const DEPOSIT_DISTANCE := 30.0
 var state: State = State.IDLE
 var target_position: Vector2
 var carried_resource: int = -1
-var grid_ref: TileGrid
-var base_ref: Base
+var grid_ref  # TileGrid
+var base_ref  # Base
 var main_ref: Node2D = null  # Reference to main game controller
 var idle_timer := 0.0
 
