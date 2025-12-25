@@ -73,6 +73,12 @@ func _draw() -> void:
 	# Draw weapon indicator
 	if equipped_weapon:
 		draw_circle(Vector2(15, -15), 6, equipped_weapon.color)
+	
+	# Draw attack range indicator
+	if equipped_weapon:
+		var range_val = equipped_weapon.attack_range
+		draw_arc(Vector2.ZERO, range_val, 0, TAU, 32, Color(equipped_weapon.color.r, equipped_weapon.color.g, equipped_weapon.color.b, 0.2), 2.0)
+		draw_circle(Vector2.ZERO, range_val, Color(equipped_weapon.color.r, equipped_weapon.color.g, equipped_weapon.color.b, 0.1))
 
 func move_to(world_pos: Vector2) -> void:
 	target_position = world_pos

@@ -31,4 +31,3 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	draw_circle(Vector2.ZERO, 4, color)
 	draw_circle(Vector2.ZERO, 4, Color.WHITE, false, 1.0)
-

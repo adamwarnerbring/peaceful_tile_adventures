@@ -17,6 +17,8 @@ var grid_zones: Array[Array] = []
 var grid_turrets: Array[Array] = []  # Turret placement
 var resource_scene: PackedScene
 var show_turret_placement: bool = false  # Show valid placement indicators
+var placing_turret_type: Turret.TurretType = Turret.TurretType.ARROW  # Type being placed
+var hover_grid_pos: Vector2i = Vector2i(-1, -1)  # Current hover position for range display
 
 var unlocked_zones: Dictionary = {
 	Zone.BASE: true,
@@ -155,6 +157,9 @@ func _draw() -> void:
 	# Draw turret placement indicators
 	if show_turret_placement:
 		_draw_turret_placement_indicators()
+		# Draw attack range at hover position
+		if hover_grid_pos.x >= 0:
+			_draw_turret_range_indicator()
 
 func _draw_turret_placement_indicators() -> void:
 	# Show valid/invalid placement areas for turrets
@@ -163,15 +168,37 @@ func _draw_turret_placement_indicators() -> void:
 			var grid_pos = Vector2i(x, y)
 			var rect = Rect2(Vector2(x, y) * CELL_SIZE, Vector2(CELL_SIZE, CELL_SIZE))
 			
+			# Check if cell is valid and accessible
+			if not is_valid_cell(grid_pos):
+				continue
+			
 			if is_base_area(grid_pos):
 				# Invalid: base area (red tint)
 				draw_rect(rect, Color(1.0, 0.0, 0.0, 0.3))
 			elif get_turret_at(grid_pos) != null:
 				# Invalid: already has turret (orange tint)
 				draw_rect(rect, Color(1.0, 0.5, 0.0, 0.3))
-			elif is_cell_accessible(grid_pos):
+			elif not is_cell_accessible(grid_pos):
+				# Invalid: locked zone (dark red tint)
+				draw_rect(rect, Color(0.5, 0.0, 0.0, 0.3))
+			else:
 				# Valid placement (green tint)
 				draw_rect(rect, Color(0.0, 1.0, 0.0, 0.2))
+
+func _draw_turret_range_indicator() -> void:
+	# Draw attack range circle at hover position
+	if hover_grid_pos.x < 0 or hover_grid_pos.y < 0:
+		return
+	
+	# grid_to_world returns local coordinates (relative to TileGrid)
+	var local_pos = grid_to_world(hover_grid_pos)
+	var stats = Turret.type_stats.get(placing_turret_type, Turret.type_stats[Turret.TurretType.ARROW])
+	var range_val = stats["range"]
+	var color = stats["color"]
+	
+	# Draw range circle (drawing is already in local space)
+	draw_arc(local_pos, range_val, 0, TAU, 64, Color(color.r, color.g, color.b, 0.3), 2.0)
+	draw_circle(local_pos, range_val, Color(color.r, color.g, color.b, 0.1))
 
 func _draw_curved_zone_boundaries() -> void:
 	# Draw subtle boundary lines between unlocked zones only
@@ -270,7 +297,16 @@ func place_turret(grid_pos: Vector2i, turret: Node2D) -> bool:
 	if grid_turrets[grid_pos.x][grid_pos.y] != null:
 		return false
 	grid_turrets[grid_pos.x][grid_pos.y] = turret
+	# Store grid position in turret for cleanup
+	if turret.has_method("set_grid_position"):
+		turret.set_grid_position(grid_pos)
+	elif turret.has("grid_position"):
+		turret.grid_position = grid_pos
 	return true
+
+func remove_turret_at(grid_pos: Vector2i) -> void:
+	if is_valid_cell(grid_pos):
+		grid_turrets[grid_pos.x][grid_pos.y] = null
 
 func spawn_resource(grid_pos: Vector2i, tier: int = 0) -> bool:
 	if not is_valid_cell(grid_pos):

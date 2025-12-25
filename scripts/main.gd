@@ -7,6 +7,7 @@ extends Node2D
 @onready var bots_container: Node2D = $Bots
 @onready var enemies_container: Node2D = $Enemies
 @onready var turrets_container: Node2D = $Turrets
+@onready var mercenaries_container: Node2D = $Mercenaries
 @onready var coin_label: Label = $UI/CoinLabel
 @onready var health_label: Label = $UI/HealthLabel
 @onready var carry_label: Label = $UI/CarryLabel
@@ -40,6 +41,7 @@ var projectile_scene: PackedScene
 var bot_scene: PackedScene
 var enemy_scene: PackedScene
 var turret_scene: PackedScene
+var mercenary_scene: PackedScene
 
 var bot_prices: Dictionary = {
 	TileGrid.Zone.FOREST: 50,
@@ -52,6 +54,8 @@ var bot_counts: Dictionary = {}
 
 var owned_weapons: Array[Weapon] = []
 var turret_counts: Dictionary = {}
+var mercenary_counts: Dictionary = {}  # MercenaryType -> count
+var mercenary_prices: Dictionary = {}  # MercenaryType -> price
 
 # Upgrade system
 var upgrade_levels: Dictionary = {}  # UpgradeType -> level
@@ -83,6 +87,7 @@ func _ready() -> void:
 	bot_scene = preload("res://scenes/collector_bot.tscn")
 	enemy_scene = preload("res://scenes/enemy.tscn")
 	turret_scene = preload("res://scenes/turret.tscn")
+	mercenary_scene = preload("res://scenes/mercenary.tscn")
 	# Create projectiles container
 	projectiles_container = Node2D.new()
 	projectiles_container.name = "Projectiles"
@@ -94,8 +99,16 @@ func _ready() -> void:
 		bot_counts[zone] = 0
 	
 	# Initialize turret counts
-	for ttype in [Turret.TurretType.ARROW, Turret.TurretType.MAGIC, Turret.TurretType.FIRE, Turret.TurretType.LIGHTNING]:
+	for ttype in [Turret.TurretType.ARROW, Turret.TurretType.MAGIC, Turret.TurretType.FIRE, Turret.TurretType.LIGHTNING, Turret.TurretType.SNIPER]:
 		turret_counts[ttype] = 0
+	
+	# Initialize mercenary counts and prices
+	var merc_configs = MercenaryConfig.get_all_configs()
+	for mtype in [Mercenary.MercenaryType.WARRIOR, Mercenary.MercenaryType.ARCHER, Mercenary.MercenaryType.MAGE, Mercenary.MercenaryType.KNIGHT]:
+		mercenary_counts[mtype] = 0
+		var config = merc_configs.get(mtype)
+		if config:
+			mercenary_prices[mtype] = config.price
 	
 	var viewport_size = get_viewport().get_visible_rect().size
 	var grid_size = tile_grid.get_grid_pixel_size()
@@ -224,6 +237,16 @@ func get_enemies() -> Array:
 			enemies.append(child)
 	return enemies
 
+func get_bots() -> Array:
+	var bots: Array = []
+	for child in bots_container.get_children():
+		if child is CollectorBot and is_instance_valid(child):
+			bots.append(child)
+	return bots
+
+func get_player() -> Player:
+	return player
+
 func get_targets_by_priority(priority: EnemyConfig.AttackPriority, from_pos: Vector2, max_range: float) -> Array:
 	var targets: Array = []
 	
@@ -311,6 +334,8 @@ func _on_enemy_attacked(target: Node2D) -> void:
 					target.take_damage(damage)
 				elif target is Turret:
 					target.take_damage(damage)
+				elif target is Mercenary:
+					target.take_damage(damage)
 				elif target is Base:
 					var actual_damage = max(1.0, damage - base_armor)
 					target.take_damage(actual_damage)
@@ -341,11 +366,28 @@ func _on_projectile_hit(projectile: Projectile, target: Node2D) -> void:
 		target.take_damage(damage)
 	elif target is Turret:
 		target.take_damage(damage)
+	elif target is Mercenary:
+		target.take_damage(damage)
 	elif target is Base:
 		var actual_damage = max(1.0, damage - base_armor)
 		target.take_damage(actual_damage)
 	elif target is Enemy:
 		target.take_damage(damage)
+	elif target is Mercenary:
+		target.take_damage(damage)
+
+func _create_mercenary_projectile(mercenary: Mercenary, target: Node2D) -> void:
+	# Create projectile for ranged mercenary
+	var projectile = Node2D.new()
+	projectile.set_script(preload("res://scripts/projectile.gd"))
+	projectile.position = mercenary.position
+	projectile.target = target
+	projectile.source = mercenary
+	projectile.damage = mercenary.config.damage
+	projectile.speed = 250.0
+	projectile.color = mercenary.config.color
+	projectile.hit_target.connect(_on_projectile_hit.bind(projectile))
+	projectiles_container.add_child(projectile)
 
 func _create_weapon_projectile(from: Vector2, to: Node2D, damage: float, color: Color) -> void:
 	var projectile = Node2D.new()
@@ -449,6 +491,21 @@ func _on_player_died() -> void:
 	player.visible = false
 
 func _input(event: InputEvent) -> void:
+	# Update hover position for turret placement range display
+	if is_placing_turret:
+		var mouse_pos: Vector2
+		if event is InputEventMouseMotion:
+			mouse_pos = event.global_position
+		elif event is InputEventScreenTouch and not event.pressed:
+			mouse_pos = event.position
+		
+		if mouse_pos != Vector2.ZERO and not _is_touching_ui(mouse_pos):
+			var local_pos = mouse_pos - tile_grid.position
+			var grid_pos = tile_grid.world_to_grid(local_pos)
+			if tile_grid.is_valid_cell(grid_pos):
+				tile_grid.hover_grid_pos = grid_pos
+				tile_grid.queue_redraw()
+	
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			_handle_touch(event.position)
@@ -464,12 +521,16 @@ func _handle_touch(touch_pos: Vector2) -> void:
 	var grid_pos = tile_grid.world_to_grid(local_pos)
 	
 	if is_placing_turret:
+		# Update hover position for range display
+		tile_grid.hover_grid_pos = grid_pos
+		tile_grid.queue_redraw()
 		_try_place_turret(grid_pos)
 		return
 	
 	if tile_grid.is_cell_accessible(grid_pos):
 		var target = tile_grid.position + tile_grid.grid_to_world(grid_pos)
 		player.move_to(target)
+
 
 func _try_place_turret(grid_pos: Vector2i) -> void:
 	if not tile_grid.is_cell_accessible(grid_pos):
@@ -489,12 +550,15 @@ func _try_place_turret(grid_pos: Vector2i) -> void:
 	var turret = turret_scene.instantiate() as Turret
 	turret.turret_type = placing_turret
 	turret.position = tile_grid.position + tile_grid.grid_to_world(grid_pos)
+	turret.grid_position = grid_pos
+	turret.grid_ref = tile_grid
 	turret.died.connect(_on_turret_died)
 	tile_grid.place_turret(grid_pos, turret)
 	turrets_container.add_child(turret)
 	
 	is_placing_turret = false
 	tile_grid.show_turret_placement = false
+	tile_grid.hover_grid_pos = Vector2i(-1, -1)
 	tile_grid.queue_redraw()
 	_update_ui()
 
@@ -556,6 +620,9 @@ func _on_zone_unlocked(_zone: TileGrid.Zone) -> void:
 func _toggle_shop() -> void:
 	shop_panel.visible = not shop_panel.visible
 	is_placing_turret = false
+	tile_grid.show_turret_placement = false
+	tile_grid.hover_grid_pos = Vector2i(-1, -1)
+	tile_grid.queue_redraw()
 	if shop_panel.visible:
 		_switch_tab(current_tab)  # Refresh current tab
 
@@ -576,6 +643,7 @@ func _create_tabs() -> void:
 		{"name": "Bots", "color": Color("#22c55e")},
 		{"name": "Weapons", "color": Color("#c084fc")},
 		{"name": "Turrets", "color": Color("#f97316")},
+		{"name": "Mercenaries", "color": Color("#3b82f6")},
 		{"name": "Upgrades", "color": Color("#3b82f6")},
 		{"name": "Base Upgrades", "color": Color("#fbbf24")}
 	]
@@ -642,6 +710,8 @@ func _refresh_shop() -> void:
 			_populate_weapons_tab(grid)
 		"Turrets":
 			_populate_turrets_tab(grid)
+		"Mercenaries":
+			_populate_mercenaries_tab(grid)
 		"Upgrades":
 			_populate_upgrades_tab(grid)
 		"Base Upgrades":
@@ -740,7 +810,7 @@ func _populate_weapons_tab(grid: GridContainer) -> void:
 		grid.add_child(btn)
 
 func _populate_turrets_tab(grid: GridContainer) -> void:
-	for ttype in [Turret.TurretType.ARROW, Turret.TurretType.MAGIC, Turret.TurretType.FIRE, Turret.TurretType.LIGHTNING]:
+	for ttype in [Turret.TurretType.ARROW, Turret.TurretType.MAGIC, Turret.TurretType.FIRE, Turret.TurretType.LIGHTNING, Turret.TurretType.SNIPER]:
 		var btn = _create_shop_button()
 		var price = Turret.get_price(ttype)
 		var tname = Turret.get_turret_name(ttype)
@@ -751,6 +821,42 @@ func _populate_turrets_tab(grid: GridContainer) -> void:
 		btn.disabled = coins < price
 		btn.pressed.connect(_on_select_turret.bind(ttype))
 		_add_tooltip_to_button(btn, "Tap grid to place after buying")
+		grid.add_child(btn)
+
+func _populate_mercenaries_tab(grid: GridContainer) -> void:
+	var merc_configs = MercenaryConfig.get_all_configs()
+	var behavior_names = {
+		Mercenary.BehaviorType.GUARD_BOTS: "Guard Bots",
+		Mercenary.BehaviorType.GUARD_PLAYER: "Guard Player",
+		Mercenary.BehaviorType.HUNT_ENEMIES: "Hunt Enemies",
+		Mercenary.BehaviorType.PATROL_ZONE: "Patrol Zone"
+	}
+	
+	for mtype in [Mercenary.MercenaryType.WARRIOR, Mercenary.MercenaryType.ARCHER, Mercenary.MercenaryType.MAGE, Mercenary.MercenaryType.KNIGHT]:
+		var config = merc_configs.get(mtype)
+		if not config:
+			continue
+		
+		var btn = _create_shop_button()
+		var price = mercenary_prices.get(mtype, config.price)
+		var count = mercenary_counts.get(mtype, 0)
+		
+		btn.text = "⚔️ " + config.name
+		btn.text += "\n(" + str(count) + ") " + str(price) + " 🪙"
+		btn.add_theme_color_override("font_color", config.color)
+		btn.disabled = coins < price
+		btn.pressed.connect(_on_buy_mercenary.bind(mtype))
+		
+		var tooltip = "HP: " + str(int(config.max_health))
+		tooltip += "\nDMG: " + str(int(config.damage))
+		tooltip += "\nRNG: " + str(int(config.attack_range))
+		tooltip += "\nSPD: " + str(int(config.move_speed))
+		tooltip += "\n\nBehaviors:"
+		tooltip += "\n- " + behavior_names[Mercenary.BehaviorType.HUNT_ENEMIES]
+		tooltip += "\n- " + behavior_names[Mercenary.BehaviorType.GUARD_PLAYER]
+		tooltip += "\n- " + behavior_names[Mercenary.BehaviorType.GUARD_BOTS]
+		tooltip += "\n- " + behavior_names[Mercenary.BehaviorType.PATROL_ZONE]
+		_add_tooltip_to_button(btn, tooltip)
 		grid.add_child(btn)
 
 func _has_weapon(wtype: Weapon.WeaponType) -> bool:
@@ -823,13 +929,57 @@ func _on_equip_weapon(wtype: Weapon.WeaponType) -> void:
 			break
 	_refresh_shop()
 
+func _on_buy_mercenary(mtype: Mercenary.MercenaryType) -> void:
+	var price = mercenary_prices.get(mtype, 150)
+	if coins < price:
+		return
+	
+	coins -= price
+	mercenary_counts[mtype] = mercenary_counts.get(mtype, 0) + 1
+	mercenary_prices[mtype] = int(price * 1.5)  # Price increases with each purchase
+	
+	# Spawn mercenary in front of base
+	var mercenary = mercenary_scene.instantiate() as Mercenary
+	mercenary.mercenary_type = mtype
+	mercenary.behavior = Mercenary.BehaviorType.HUNT_ENEMIES  # Default behavior
+	mercenary.grid_ref = tile_grid
+	mercenary.main_ref = self
+	
+	# Spawn in front of base
+	var spawn_cell = Vector2i(TileGrid.BASE_CENTER_X, TileGrid.BASE_CENTER_Y - 3)
+	
+	# Try to find empty cell near base front
+	var attempts = 10
+	for i in attempts:
+		var test_cell = spawn_cell + Vector2i(randi_range(-2, 2), 0)
+		if tile_grid.is_valid_cell(test_cell) and not tile_grid.is_base_area(test_cell):
+			var resource = tile_grid.get_resource_at(test_cell)
+			if resource == null:
+				spawn_cell = test_cell
+				break
+	
+	mercenary.position = tile_grid.position + tile_grid.grid_to_world(spawn_cell)
+	mercenary.died.connect(_on_mercenary_died)
+	mercenaries_container.add_child(mercenary)
+	_refresh_shop()
+
+func _on_mercenary_died(mercenary: Mercenary) -> void:
+	# Decrement count
+	if mercenary_counts.has(mercenary.mercenary_type):
+		mercenary_counts[mercenary.mercenary_type] = max(0, mercenary_counts[mercenary.mercenary_type] - 1)
+
 func _on_select_turret(ttype: Turret.TurretType) -> void:
 	var price = Turret.get_price(ttype)
 	if coins < price:
 		return
 	placing_turret = ttype
 	is_placing_turret = true
+	tile_grid.show_turret_placement = true
+	tile_grid.placing_turret_type = ttype
+	tile_grid.hover_grid_pos = Vector2i(-1, -1)
+	tile_grid.queue_redraw()
 	shop_panel.visible = false
+	_update_ui()
 
 func _on_bot_deposited(tier: int) -> void:
 	_award_coins(tier)

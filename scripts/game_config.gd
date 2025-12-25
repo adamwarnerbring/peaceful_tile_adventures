@@ -8,8 +8,8 @@ extends Resource
 @export var max_resources_per_zone: int = 8
 @export var min_enemy_spawn_distance: float = 200.0
 @export var pickup_distance: float = 25.0
-@export var starting_coins: int = 30
-@export var starting_max_coins: int = 1000
+@export var starting_coins: int = 10000000
+@export var starting_max_coins: int = 10000000
 
 # Map scaling
 @export var base_grid_size: Vector2i = Vector2i(20, 32)

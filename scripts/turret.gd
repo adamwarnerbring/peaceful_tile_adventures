@@ -5,7 +5,7 @@ extends Node2D
 signal died()
 signal health_changed(current: float, maximum: float)
 
-enum TurretType { ARROW, MAGIC, FIRE, LIGHTNING }
+enum TurretType { ARROW, MAGIC, FIRE, LIGHTNING, SNIPER }
 
 @export var turret_type: TurretType = TurretType.ARROW
 @export var damage: float = 8.0
@@ -17,12 +17,18 @@ enum TurretType { ARROW, MAGIC, FIRE, LIGHTNING }
 var health: float
 var attack_timer: float = 0.0
 var current_target: Enemy = null
+var grid_position: Vector2i = Vector2i(-1, -1)  # Track position for cleanup
+var grid_ref: TileGrid = null  # Reference to grid for cleanup
 
-var type_stats: Dictionary = {
+func set_grid_position(pos: Vector2i) -> void:
+	grid_position = pos
+
+static var type_stats: Dictionary = {
 	TurretType.ARROW: {"damage": 8, "range": 120, "speed": 0.8, "aoe": 0, "color": Color("#a3e635"), "health": 80},
 	TurretType.MAGIC: {"damage": 12, "range": 100, "speed": 1.2, "aoe": 30, "color": Color("#c084fc"), "health": 100},
 	TurretType.FIRE: {"damage": 20, "range": 80, "speed": 1.5, "aoe": 50, "color": Color("#f97316"), "health": 120},
 	TurretType.LIGHTNING: {"damage": 6, "range": 150, "speed": 0.4, "aoe": 0, "color": Color("#38bdf8"), "health": 60},
+	TurretType.SNIPER: {"damage": 25, "range": 250, "speed": 2.0, "aoe": 0, "color": Color("#ef4444"), "health": 90},
 }
 
 var type_prices: Dictionary = {
@@ -30,6 +36,7 @@ var type_prices: Dictionary = {
 	TurretType.MAGIC: 200,
 	TurretType.FIRE: 400,
 	TurretType.LIGHTNING: 600,
+	TurretType.SNIPER: 800,
 }
 
 func _ready() -> void:
@@ -38,7 +45,7 @@ func _ready() -> void:
 	queue_redraw()
 
 func _apply_type_stats() -> void:
-	var stats = type_stats.get(turret_type, type_stats[TurretType.ARROW])
+	var stats = Turret.type_stats.get(turret_type, Turret.type_stats[TurretType.ARROW])
 	damage = stats["damage"]
 	attack_range = stats["range"]
 	attack_speed = stats["speed"]
@@ -87,6 +94,9 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	# Clear grid position before freeing
+	if grid_position.x >= 0 and grid_ref:
+		grid_ref.remove_turret_at(grid_position)
 	died.emit()
 	var tw = create_tween()
 	tw.tween_property(self, "scale", Vector2.ZERO, 0.2)
@@ -94,7 +104,7 @@ func _die() -> void:
 	tw.tween_callback(queue_free)
 
 func _draw() -> void:
-	var stats = type_stats.get(turret_type, type_stats[TurretType.ARROW])
+	var stats = Turret.type_stats.get(turret_type, Turret.type_stats[TurretType.ARROW])
 	var color: Color = stats["color"]
 	
 	# Base
@@ -116,6 +126,11 @@ func _draw() -> void:
 		TurretType.LIGHTNING:
 			draw_line(Vector2(-3, -8), Vector2(3, 0), Color.WHITE, 2.0)
 			draw_line(Vector2(3, 0), Vector2(-3, 8), Color.WHITE, 2.0)
+		TurretType.SNIPER:
+			# Draw scope/crosshair
+			draw_line(Vector2(-8, 0), Vector2(8, 0), color.lightened(0.5), 2.0)
+			draw_line(Vector2(0, -8), Vector2(0, 8), color.lightened(0.5), 2.0)
+			draw_circle(Vector2.ZERO, 6, color.lightened(0.5), false, 2.0)
 	
 	# Health bar
 	var bar_width = 24
@@ -135,6 +150,7 @@ static func get_price(ttype: TurretType) -> int:
 		TurretType.MAGIC: 200,
 		TurretType.FIRE: 400,
 		TurretType.LIGHTNING: 600,
+		TurretType.SNIPER: 800,
 	}
 	return prices.get(ttype, 100)
 
@@ -144,5 +160,6 @@ static func get_turret_name(ttype: TurretType) -> String:
 		TurretType.MAGIC: "Magic Tower",
 		TurretType.FIRE: "Fire Tower",
 		TurretType.LIGHTNING: "Lightning Tower",
+		TurretType.SNIPER: "Sniper Tower",
 	}
 	return names.get(ttype, "Tower")
