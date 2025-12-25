@@ -39,6 +39,7 @@ var wave_timer: float = 0.0
 var is_wave_active: bool = false
 var enemies_spawned_this_wave: int = 0
 var enemies_to_spawn_this_wave: int = 0
+var wave_enemy_queue: Array = []  # Queue of enemies to spawn this wave
 var base_weapon_level: int = 0  # Base auto-attack level
 var base_attack_timer: float = 0.0
 var player_respawn_timer: float = 0.0
@@ -266,6 +267,10 @@ func _process_waves(delta: float) -> void:
 				_spawn_enemies_during_wave()
 		else:
 			# Limited wave - check if wave should end
+			# First check if all enemies are killed (early completion)
+			_check_wave_completion()
+			
+			# Then check timer-based end
 			if wave_timer >= game_config.wave_duration:
 				_end_wave()
 			else:
@@ -279,8 +284,17 @@ func _start_wave() -> void:
 	is_wave_active = true
 	wave_timer = 0.0
 	enemies_spawned_this_wave = 0
-	# Calculate enemies for this wave
-	enemies_to_spawn_this_wave = int(game_config.enemies_per_wave_base * pow(game_config.enemies_per_wave_increase, current_round - 1))
+	
+	# Build queue of enemies to spawn from wave config
+	wave_enemy_queue.clear()
+	var wave_enemies = WaveConfig.get_wave_enemies(current_round)
+	for enemy_data in wave_enemies:
+		var enemy_type = enemy_data["type"]
+		var count = enemy_data["count"]
+		for i in count:
+			wave_enemy_queue.append(enemy_type)
+	
+	enemies_to_spawn_this_wave = wave_enemy_queue.size()
 	
 	# Remove all resources when wave starts
 	_remove_all_resources()
@@ -306,22 +320,32 @@ func _end_wave() -> void:
 		wave_label.text = "😌 CHILL TIME - Round " + str(current_round) + " in " + str(int(game_config.chill_time_duration - wave_timer)) + "s"
 
 func _spawn_enemies_during_wave() -> void:
-	# Spawn enemies in unlocked zones during wave
+	# Spawn enemies based on wave configuration, not zones
 	if current_round < game_config.continuous_waves_start_round:
-		# Limited wave - spawn up to wave limit
-		if enemies_spawned_this_wave >= enemies_to_spawn_this_wave:
+		# Limited wave - check if we've spawned all enemies for this wave
+		if enemies_spawned_this_wave >= enemies_to_spawn_this_wave or wave_enemy_queue.is_empty():
 			return
-	
-	for zone in [TileGrid.Zone.FOREST, TileGrid.Zone.CAVE, TileGrid.Zone.CRYSTAL, TileGrid.Zone.VOLCANO, TileGrid.Zone.ABYSS]:
-		if tile_grid.is_zone_unlocked(zone) and zone != TileGrid.Zone.BASE:
-			var danger = tile_grid.get_zone_danger(zone)
-			# Higher danger = more likely to spawn
-			if randf() < danger * 0.2:
-				_spawn_enemy_in_zone(zone)
-				enemies_spawned_this_wave += 1
-				if current_round < game_config.continuous_waves_start_round:
-					if enemies_spawned_this_wave >= enemies_to_spawn_this_wave:
-						return
+		
+		# Spawn one enemy from queue
+		var enemy_type = wave_enemy_queue.pop_front()
+		_spawn_enemy_of_type(enemy_type)
+		enemies_spawned_this_wave += 1
+	else:
+		# Continuous waves - spawn from queue or generate new enemies
+		if wave_enemy_queue.is_empty():
+			# Regenerate queue for continuous waves
+			var wave_enemies = WaveConfig.get_wave_enemies(current_round)
+			for enemy_data in wave_enemies:
+				var enemy_type = enemy_data["type"]
+				var count = enemy_data["count"]
+				for i in count:
+					wave_enemy_queue.append(enemy_type)
+		
+		if not wave_enemy_queue.is_empty():
+			# Spawn one enemy per call
+			var enemy_type = wave_enemy_queue.pop_front()
+			_spawn_enemy_of_type(enemy_type)
+			enemies_spawned_this_wave += 1
 
 func _return_bots_to_base() -> void:
 	# Make all bots return to base
@@ -329,14 +353,28 @@ func _return_bots_to_base() -> void:
 		if bot is CollectorBot:
 			bot.return_to_base()
 
-func _spawn_enemy_in_zone(zone: TileGrid.Zone) -> void:
-	# Spawn enemies at map edges only
+func _spawn_enemy_of_type(enemy_type: Enemy.EnemyType) -> void:
+	# Spawn enemy at random edge of any unlocked zone
+	var unlocked_zones: Array[TileGrid.Zone] = []
+	for zone in [TileGrid.Zone.FOREST, TileGrid.Zone.CAVE, TileGrid.Zone.CRYSTAL, TileGrid.Zone.VOLCANO, TileGrid.Zone.ABYSS]:
+		if tile_grid.is_zone_unlocked(zone):
+			unlocked_zones.append(zone)
+	
+	if unlocked_zones.is_empty():
+		# No zones unlocked, spawn at map edge
+		unlocked_zones.append(TileGrid.Zone.FOREST)
+	
+	# Pick random unlocked zone
+	var zone = unlocked_zones[randi() % unlocked_zones.size()]
 	var cell = tile_grid.get_random_edge_cell_in_zone(zone)
 	if cell.x < 0:
-		return
+		# Fallback: try any edge cell
+		cell = tile_grid.get_random_edge_cell_in_zone(TileGrid.Zone.FOREST)
+		if cell.x < 0:
+			return
 	
 	var enemy = enemy_scene.instantiate() as Enemy
-	enemy.enemy_type = Enemy.get_type_for_zone(zone)
+	enemy.enemy_type = enemy_type
 	enemy.grid_ref = tile_grid
 	enemy.position = tile_grid.position + tile_grid.grid_to_world(cell)
 	enemy.base_target = base  # Set base as wander target
@@ -345,12 +383,37 @@ func _spawn_enemy_in_zone(zone: TileGrid.Zone) -> void:
 	
 	enemies_container.add_child(enemy)
 
+func _spawn_enemy_in_zone(zone: TileGrid.Zone) -> void:
+	# Legacy function - now uses wave config instead
+	# This is kept for backwards compatibility but shouldn't be called
+	var enemy_type = Enemy.get_type_for_zone(zone)
+	_spawn_enemy_of_type(enemy_type)
+
 func get_enemies() -> Array:
 	var enemies: Array = []
 	for child in enemies_container.get_children():
 		if child is Enemy and is_instance_valid(child):
 			enemies.append(child)
 	return enemies
+
+func _check_wave_completion() -> void:
+	# Check if all enemies are killed and wave should end
+	if not is_wave_active:
+		return
+	
+	# For continuous waves, don't end early
+	if current_round >= game_config.continuous_waves_start_round:
+		return
+	
+	# Only check completion if we've finished spawning all enemies for this wave
+	if enemies_spawned_this_wave < enemies_to_spawn_this_wave:
+		return  # Still spawning enemies, don't check yet
+	
+	# Check if all enemies are dead
+	var alive_enemies = get_enemies()
+	if alive_enemies.is_empty():
+		# All enemies spawned and all killed - end wave immediately
+		_end_wave()
 
 func get_bots() -> Array:
 	var bots: Array = []
@@ -544,6 +607,10 @@ func _on_enemy_died(enemy: Enemy) -> void:
 	
 	# Enemy drops based on level/zone
 	_spawn_enemy_drops(enemy)
+	
+	# Check if all enemies are killed - end wave early if so
+	if is_wave_active:
+		_check_wave_completion()
 
 func _on_base_health_changed(current: float, maximum: float) -> void:
 	if base_health_label:
