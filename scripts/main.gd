@@ -36,9 +36,14 @@ var bot_prices: Dictionary = {
 }
 var bot_counts: Dictionary = {}
 
-# Base upgrade system
-var base_upgrade_levels: Dictionary = {}  # BaseUpgrade.UpgradeType -> level
+# Collection speed multiplier (now managed by Castle upgrades)
 var collection_speed_multiplier: float = 1.0  # Global collection speed multiplier
+
+# Level management system
+var unlocked_levels: Array[MapLevel] = []
+var current_level: MapLevel = null  # Currently active level (Level 0)
+var max_unlocked_level: int = 0  # Highest unlocked level index
+var castle_upgrade_levels: Dictionary = {}  # CastleUpgrade.UpgradeType -> purchased (bool for one-time)
 
 # Tooltip system
 var tooltip_label: Label = null
@@ -88,9 +93,15 @@ func _ready() -> void:
 	stats_toggle_btn.pressed.connect(_toggle_stats)
 	stats_panel.visible = false
 	
-	# Initialize base upgrade levels
-	for upgrade in BaseUpgrade.get_all_upgrades():
-		base_upgrade_levels[upgrade.upgrade_type] = 0
+	# Initialize castle upgrade levels
+	for upgrade in CastleUpgrade.get_all_upgrades():
+		if upgrade.is_one_time:
+			castle_upgrade_levels[upgrade.upgrade_type] = false
+		else:
+			castle_upgrade_levels[upgrade.upgrade_type] = 0
+	
+	# Initialize Level 0 (current map)
+	_initialize_level_0()
 	
 	_setup_shop()
 	_spawn_initial_resources()
@@ -123,8 +134,13 @@ func _process(delta: float) -> void:
 	_update_ui()
 
 func _spawn_resources() -> void:
+	# Spawn resources for current level (Level 0 for now)
+	# In full implementation, would spawn for all unlocked levels
+	if not current_level or not current_level.is_unlocked:
+		return
+	
 	for zone in [TileGrid.Zone.FOREST, TileGrid.Zone.CAVE, TileGrid.Zone.CRYSTAL, TileGrid.Zone.VOLCANO, TileGrid.Zone.ABYSS]:
-		if tile_grid.is_zone_unlocked(zone):
+		if current_level.is_zone_unlocked(zone):
 			if tile_grid.count_resources_in_zone(zone) < game_config.max_resources_per_zone:
 				tile_grid.spawn_resource_in_zone(zone)
 
@@ -209,6 +225,8 @@ func _check_base_deposit() -> void:
 			_award_coins(tier)
 
 func _award_coins(tier: int) -> void:
+	# Higher tier resources are exponentially more valuable
+	# Level 0: tiers 0-5, Level 1: tiers 6-10 (64x more), etc.
 	var amount = int(pow(2, tier))
 	coins = mini(coins + amount, max_coins)  # Respect gold capacity
 	total_coins_earned += amount
@@ -251,11 +269,11 @@ func _create_tabs() -> void:
 		child.queue_free()
 	tab_contents.clear()
 	
-	# Define tabs (only peaceful ones)
+	# Define tabs (Castle includes all upgrades now)
 	var tabs = [
 		{"name": "Zones", "color": Color("#94a3b8")},
 		{"name": "Bots", "color": Color("#22c55e")},
-		{"name": "Base Upgrades", "color": Color("#fbbf24")}
+		{"name": "Castle", "color": Color("#a855f7")}
 	]
 	
 	# Create tab buttons and content containers
@@ -316,8 +334,8 @@ func _refresh_shop() -> void:
 			_populate_zones_tab(grid)
 		"Bots":
 			_populate_bots_tab(grid)
-		"Base Upgrades":
-			_populate_base_upgrades_tab(grid)
+		"Castle":
+			_populate_castle_upgrades_tab(grid)
 
 func _populate_zones_tab(grid: GridContainer) -> void:
 	for zone in zone_unlock_order:
@@ -467,81 +485,12 @@ func _create_tooltip_style() -> StyleBoxFlat:
 	style.content_margin_bottom = 6
 	return style
 
-func _populate_base_upgrades_tab(grid: GridContainer) -> void:
-	var all_upgrades = BaseUpgrade.get_all_upgrades()
-	for upgrade in all_upgrades:
-		var level = base_upgrade_levels.get(upgrade.upgrade_type, 0)
-		var btn = _create_shop_button()
-		var current_price = int(upgrade.price * pow(upgrade.price_multiplier, level))
-		var is_maxed = level >= upgrade.max_level and not upgrade.is_one_time
-		
-		if is_maxed:
-			btn.text = "🏰 " + upgrade.name + "\n[MAX]"
-			btn.disabled = true
-		else:
-			btn.text = "🏰 " + upgrade.name
-			if upgrade.is_one_time:
-				btn.text += "\n" + str(current_price) + " 🪙"
-			else:
-				btn.text += "\nLv " + str(level) + " → " + str(level + 1)
-				btn.text += "\n" + str(current_price) + " 🪙"
-			btn.disabled = coins < current_price
-			btn.pressed.connect(_on_buy_base_upgrade.bind(upgrade))
-		_add_tooltip_to_button(btn, _get_base_upgrade_tooltip(upgrade, level))
-		grid.add_child(btn)
-
 func _create_shop_button() -> Button:
 	var btn = Button.new()
 	btn.add_theme_font_size_override("font_size", 13)
 	btn.custom_minimum_size = Vector2(200, 90)
 	btn.text = ""
 	return btn
-
-func _get_base_upgrade_tooltip(upgrade: BaseUpgrade, level: int) -> String:
-	var tooltip = upgrade.description + "\n"
-	if upgrade.is_one_time:
-		tooltip += "One-time purchase\n"
-		tooltip += "Price: " + str(int(upgrade.price * pow(upgrade.price_multiplier, level))) + " 🪙"
-	else:
-		tooltip += "Current Level: " + str(level) + "/" + str(upgrade.max_level) + "\n"
-		if level < upgrade.max_level:
-			tooltip += "Next Level: +" + str(upgrade.value) + "\n"
-			tooltip += "Price: " + str(int(upgrade.price * pow(upgrade.price_multiplier, level))) + " 🪙"
-		match upgrade.upgrade_type:
-			BaseUpgrade.UpgradeType.GOLD_CAPACITY:
-				tooltip += "\nCurrent Max: " + str(max_coins) + " 🪙"
-	return tooltip
-
-func _on_buy_base_upgrade(upgrade: BaseUpgrade) -> void:
-	var level = base_upgrade_levels.get(upgrade.upgrade_type, 0)
-	if not upgrade.is_one_time and level >= upgrade.max_level:
-		return
-	
-	var price = int(upgrade.price * pow(upgrade.price_multiplier, level))
-	if coins < price:
-		return
-	
-	coins -= price
-	total_coins_earned += price
-	
-	# Apply upgrade
-	match upgrade.upgrade_type:
-		BaseUpgrade.UpgradeType.GOLD_CAPACITY:
-			max_coins += int(upgrade.value)
-			base_upgrade_levels[upgrade.upgrade_type] = level + 1
-		BaseUpgrade.UpgradeType.COLLECTION_SPEED:
-			# Increase global collection speed multiplier
-			collection_speed_multiplier += upgrade.value
-			# Apply to all existing bots
-			for bot in get_bots():
-				if bot is CollectorBot:
-					bot.speed_multiplier = game_config.global_speed_multiplier * collection_speed_multiplier
-			base_upgrade_levels[upgrade.upgrade_type] = level + 1
-		BaseUpgrade.UpgradeType.STORAGE_EXPANSION:
-			# Could expand base storage slots
-			base_upgrade_levels[upgrade.upgrade_type] = level + 1
-	
-	_refresh_shop()
 
 func _toggle_stats() -> void:
 	stats_panel.visible = not stats_panel.visible
@@ -595,6 +544,10 @@ func _update_ui() -> void:
 	# Show coins with capacity: current / max
 	coin_label.text = "🪙 " + str(coins) + " / " + str(max_coins)
 	
+	# Show level indicator if multiple levels unlocked
+	if max_unlocked_level > 0:
+		coin_label.text += " | Level " + str(max_unlocked_level + 1)
+	
 	if player.is_carrying():
 		var tier = player.carried_resource
 		carry_label.text = "Carrying T%d → Slot %d" % [tier, tier]
@@ -602,3 +555,201 @@ func _update_ui() -> void:
 	else:
 		carry_label.text = "Tap to move"
 		carry_label.modulate = Color("#94a3b8")
+
+# Level Management Functions
+
+func _initialize_level_0() -> void:
+	# Create Level 0 (current map)
+	var level0 = MapLevel.new()
+	level0.level_index = 0
+	level0.grid_size = Vector2i(20, 32)
+	level0.cell_size = 32.0
+	level0.zoom_factor = 1.0
+	level0.min_tier = 0
+	level0.max_tier = 5
+	level0.is_unlocked = true
+	level0.tile_grid = tile_grid
+	
+	# Connect level 0 to existing tile grid
+	unlocked_levels.append(level0)
+	current_level = level0
+	max_unlocked_level = 0
+
+func _unlock_level(level_index: int) -> void:
+	if level_index <= max_unlocked_level:
+		return  # Already unlocked
+	
+	# Create new level
+	var new_level = MapLevel.new()
+	new_level.level_index = level_index
+	new_level.grid_size = Vector2i(20 * int(pow(2, level_index)), 32 * int(pow(2, level_index)))
+	new_level.cell_size = 32.0 / pow(2, level_index)  # Smaller cells for zoomed out view
+	new_level.zoom_factor = 1.0 / pow(2, level_index)  # Zoom factor
+	new_level.min_tier = 6 + (level_index - 1) * 5  # Tiers 6-10 for level 1, 11-15 for level 2, etc.
+	new_level.max_tier = 10 + (level_index - 1) * 5
+	
+	# For now, we'll use the same tile_grid but mark this level as unlocked
+	# In a full implementation, each level would have its own TileGrid instance
+	new_level.tile_grid = tile_grid
+	new_level.unlock()
+	
+	unlocked_levels.append(new_level)
+	max_unlocked_level = level_index
+	
+	# Visual feedback: could add zoom animation here
+	print("Level ", level_index, " unlocked! Map expanded ", pow(2, level_index), "x")
+
+func _populate_castle_upgrades_tab(grid: GridContainer) -> void:
+	# Map Expansion Upgrades - grouped together, hidden until previous is unlocked
+	var map_upgrades = CastleUpgrade.get_map_expansion_upgrades()
+	for upgrade in map_upgrades:
+		var level_index = int(upgrade.value)
+		var is_unlocked = castle_upgrade_levels.get(upgrade.upgrade_type, false)
+		var can_unlock = (level_index == max_unlocked_level + 1)  # Can only unlock next level
+		var is_visible = (level_index <= max_unlocked_level + 1)  # Show current and next only
+		
+		# Only show if it's the next unlockable level or already unlocked
+		if not is_visible:
+			continue  # Hide future levels (2+ steps ahead)
+		
+		var btn = _create_shop_button()
+		btn.add_theme_color_override("font_color", Color("#a855f7"))
+		
+		if is_unlocked:
+			btn.text = "✓ " + upgrade.name + "\n[UNLOCKED]"
+			btn.disabled = true
+		elif not can_unlock:
+			# This shouldn't happen due to is_visible check, but just in case
+			btn.text = "🔒 " + upgrade.name + "\nUnlock previous level first"
+			btn.disabled = true
+		else:
+			# Next unlockable level - show full details
+			btn.text = "🗺️ " + upgrade.name
+			btn.text += "\n" + str(upgrade.price) + " 🪙"
+			btn.text += "\nExpands map " + str(int(pow(2, level_index))) + "x"
+			btn.disabled = coins < upgrade.price
+			btn.pressed.connect(_on_buy_castle_upgrade.bind(upgrade))
+		
+		# Show full description for all visible levels
+		_add_tooltip_to_button(btn, upgrade.description)
+		grid.add_child(btn)
+	
+	# Base/Castle Upgrades (non-map expansion)
+	var base_upgrades = CastleUpgrade.get_base_upgrades()
+	for upgrade in base_upgrades:
+		var btn = _create_shop_button()
+		btn.add_theme_color_override("font_color", Color("#fbbf24"))
+		
+		var level = 0
+		if upgrade.is_one_time:
+			var is_purchased = castle_upgrade_levels.get(upgrade.upgrade_type, false)
+			if is_purchased:
+				btn.text = "✓ " + upgrade.name + "\n[PURCHASED]"
+				btn.disabled = true
+			else:
+				btn.text = "🏰 " + upgrade.name
+				btn.text += "\n" + str(upgrade.price) + " 🪙"
+				btn.disabled = coins < upgrade.price
+				btn.pressed.connect(_on_buy_castle_upgrade.bind(upgrade))
+		else:
+			# For non-one-time upgrades, track level
+			var level_value = castle_upgrade_levels.get(upgrade.upgrade_type, 0)
+			if level_value is bool:
+				level = 0
+			else:
+				level = level_value as int
+			var current_price = int(upgrade.price * pow(1.5, level))  # Price increases with level
+			
+			btn.text = "🏰 " + upgrade.name
+			btn.text += "\nLv " + str(level) + " → " + str(level + 1)
+			btn.text += "\n" + str(current_price) + " 🪙"
+			btn.disabled = coins < current_price
+			btn.pressed.connect(_on_buy_castle_upgrade.bind(upgrade))
+		
+		# Add tooltip with level info
+		var tooltip = upgrade.description
+		if not upgrade.is_one_time:
+			tooltip += "\nCurrent Level: " + str(level)
+			if upgrade.upgrade_type == CastleUpgrade.UpgradeType.GOLD_CAPACITY:
+				tooltip += "\nCurrent Max: " + str(max_coins) + " 🪙"
+		_add_tooltip_to_button(btn, tooltip)
+		grid.add_child(btn)
+
+func _on_buy_castle_upgrade(upgrade: CastleUpgrade) -> void:
+	# Calculate price (increases for non-one-time upgrades)
+	var level = 0
+	if not upgrade.is_one_time:
+		var level_value = castle_upgrade_levels.get(upgrade.upgrade_type, 0)
+		if level_value is bool:
+			level = 0
+		else:
+			level = level_value as int
+	var price = int(upgrade.price * pow(1.5, level))
+	
+	if coins < price:
+		return
+	
+	coins -= price
+	total_coins_earned += price
+	
+	# Apply upgrade
+	match upgrade.upgrade_type:
+		CastleUpgrade.UpgradeType.MAP_EXPANSION_LEVEL_1:
+			_unlock_level(1)
+			castle_upgrade_levels[upgrade.upgrade_type] = true
+		CastleUpgrade.UpgradeType.MAP_EXPANSION_LEVEL_2:
+			_unlock_level(2)
+			castle_upgrade_levels[upgrade.upgrade_type] = true
+		CastleUpgrade.UpgradeType.MAP_EXPANSION_LEVEL_3:
+			_unlock_level(3)
+			castle_upgrade_levels[upgrade.upgrade_type] = true
+		CastleUpgrade.UpgradeType.MAP_EXPANSION_LEVEL_4:
+			_unlock_level(4)
+			castle_upgrade_levels[upgrade.upgrade_type] = true
+		CastleUpgrade.UpgradeType.MAP_EXPANSION_LEVEL_5:
+			_unlock_level(5)
+			castle_upgrade_levels[upgrade.upgrade_type] = true
+		CastleUpgrade.UpgradeType.STORAGE_EXPANSION:
+			# Add more slots to base (implement in base.gd)
+			var current_level_value = castle_upgrade_levels.get(upgrade.upgrade_type, 0)
+			var current_level = 0
+			if current_level_value is bool:
+				current_level = 0
+			else:
+				current_level = current_level_value as int
+			castle_upgrade_levels[upgrade.upgrade_type] = current_level + 1
+		CastleUpgrade.UpgradeType.BASE_EXPANSION:
+			# Base expansion (visual only for now)
+			var current_level_value = castle_upgrade_levels.get(upgrade.upgrade_type, 0)
+			var current_level = 0
+			if current_level_value is bool:
+				current_level = 0
+			else:
+				current_level = current_level_value as int
+			castle_upgrade_levels[upgrade.upgrade_type] = current_level + 1
+		CastleUpgrade.UpgradeType.COLLECTION_EFFICIENCY:
+			# Improve bot efficiency
+			collection_speed_multiplier += upgrade.value
+			for bot in get_bots():
+				if bot is CollectorBot:
+					bot.speed_multiplier = game_config.global_speed_multiplier * collection_speed_multiplier
+			var current_level_value = castle_upgrade_levels.get(upgrade.upgrade_type, 0)
+			var current_level = 0
+			if current_level_value is bool:
+				current_level = 0
+			else:
+				current_level = current_level_value as int
+			castle_upgrade_levels[upgrade.upgrade_type] = current_level + 1
+		CastleUpgrade.UpgradeType.GOLD_CAPACITY:
+			# Increase gold storage capacity
+			max_coins += int(upgrade.value)
+			var current_level_value = castle_upgrade_levels.get(upgrade.upgrade_type, 0)
+			var current_level = 0
+			if current_level_value is bool:
+				current_level = 0
+			else:
+				current_level = current_level_value as int
+			castle_upgrade_levels[upgrade.upgrade_type] = current_level + 1
+	
+	_refresh_shop()
+	_update_ui()
