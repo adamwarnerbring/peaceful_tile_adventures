@@ -2,7 +2,7 @@ class_name Projectile
 extends Node2D
 ## Projectile for ranged attacks
 
-signal hit_target(target: Node2D)
+signal hit_target(projectile: Projectile, target: Node2D)
 
 var speed: float = 200.0
 var damage: float = 10.0
@@ -22,9 +22,14 @@ func _process(delta: float) -> void:
 	position += direction * speed * delta
 	
 	# Check if hit target
-	if position.distance_to(target.position) < 10.0:
-		hit_target.emit(target)
-		queue_free()
+	var dist = position.distance_to(target.position)
+	if dist < 10.0:
+		# Store target and self before freeing
+		var hit_target_node = target
+		hit_target.emit(self, hit_target_node)
+		set_process(false)  # Stop processing to prevent multiple hits
+		call_deferred("queue_free")  # Defer freeing to ensure signal is processed
+		return  # Don't continue processing after hit
 	
 	queue_redraw()
 

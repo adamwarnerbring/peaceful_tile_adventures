@@ -11,6 +11,9 @@ extends Resource
 @export var starting_coins: int = 10000000
 @export var starting_max_coins: int = 10000000
 
+# Global speed multiplier (0.6 = 60% speed, makes everything slower)
+@export var global_speed_multiplier: float = 0.6
+
 # Map scaling
 @export var base_grid_size: Vector2i = Vector2i(20, 32)
 @export var grid_size_per_upgrade: Vector2i = Vector2i(4, 6)  # How much grid expands per upgrade

@@ -8,6 +8,7 @@ signal died()
 enum State { IDLE, MOVING_TO_RESOURCE, MOVING_TO_BASE, FLEEING }
 
 const MOVE_SPEED := 100.0
+var speed_multiplier: float = 1.0
 const PICKUP_DISTANCE := 20.0
 const DEPOSIT_DISTANCE := 30.0
 
@@ -55,11 +56,12 @@ func _process_moving(delta: float) -> void:
 	var direction = (target_position - position).normalized()
 	var distance = position.distance_to(target_position)
 	
-	if distance < MOVE_SPEED * delta:
+	var effective_speed = MOVE_SPEED * speed_multiplier
+	if distance < effective_speed * delta:
 		position = target_position
 		_on_reached_target()
 	else:
-		position += direction * MOVE_SPEED * delta
+		position += direction * effective_speed * delta
 
 func _on_reached_target() -> void:
 	if state == State.MOVING_TO_RESOURCE:

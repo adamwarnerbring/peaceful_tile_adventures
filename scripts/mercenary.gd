@@ -57,8 +57,11 @@ func _guard_bots(delta: float) -> void:
 		
 		# Move to guard position
 		if dist_to_bot > guard_distance:
+			var speed_mult = 1.0
+			if main_ref and "game_config" in main_ref:
+				speed_mult = main_ref.game_config.global_speed_multiplier
 			var direction = (guard_target.position - position).normalized()
-			position += direction * config.move_speed * delta
+			position += direction * config.move_speed * speed_mult * delta
 		
 		# Attack enemies near the bot
 		_attack_nearby_enemies(delta)
@@ -80,8 +83,11 @@ func _guard_player(delta: float) -> void:
 	
 	# Move to guard position
 	if dist_to_player > guard_distance:
+		var speed_mult = 1.0
+		if main_ref and "game_config" in main_ref:
+			speed_mult = main_ref.game_config.global_speed_multiplier
 		var direction = (player.position - position).normalized()
-		position += direction * config.move_speed * delta
+		position += direction * config.move_speed * speed_mult * delta
 	
 	# Attack enemies near player
 	_attack_nearby_enemies(delta)
@@ -115,8 +121,11 @@ func _hunt_enemies(delta: float) -> void:
 			_try_attack(nearest_enemy)
 		else:
 			# Move toward enemy
+			var speed_mult = 1.0
+			if main_ref and "game_config" in main_ref:
+				speed_mult = main_ref.game_config.global_speed_multiplier
 			var direction = (nearest_enemy.position - position).normalized()
-			position += direction * config.move_speed * delta
+			position += direction * config.move_speed * speed_mult * delta
 
 func _patrol_zone(delta: float) -> void:
 	# Patrol a specific zone
@@ -128,8 +137,11 @@ func _patrol_zone(delta: float) -> void:
 		_find_patrol_point()
 	
 	if patrol_target_pos != Vector2.ZERO:
+		var speed_mult = 1.0
+		if main_ref and "game_config" in main_ref:
+			speed_mult = main_ref.game_config.global_speed_multiplier
 		var direction = (patrol_target_pos - position).normalized()
-		position += direction * config.move_speed * delta * 0.7  # Slower when patrolling
+		position += direction * config.move_speed * speed_mult * delta * 0.7  # Slower when patrolling
 	
 	# Attack enemies while patrolling
 	_attack_nearby_enemies(delta)
@@ -261,4 +273,3 @@ func _draw_knight(size: float, color: Color) -> void:
 	draw_circle(Vector2.ZERO, size, color.darkened(0.2), false, 3.0)
 	# Shield
 	draw_rect(Rect2(size * 0.5, -size * 0.4, size * 0.4, size * 0.8), color.lightened(0.2))
-

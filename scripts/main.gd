@@ -255,10 +255,16 @@ func get_targets_by_priority(priority: EnemyConfig.AttackPriority, from_pos: Vec
 			if is_instance_valid(player) and from_pos.distance_to(player.position) <= max_range:
 				targets.append(player)
 		EnemyConfig.AttackPriority.BOT:
+			# Include bots and mercenaries in BOT priority
 			for bot in bots_container.get_children():
 				if bot is CollectorBot and is_instance_valid(bot):
 					if from_pos.distance_to(bot.position) <= max_range:
 						targets.append(bot)
+			# Also include mercenaries
+			for mercenary in mercenaries_container.get_children():
+				if mercenary is Mercenary and is_instance_valid(mercenary):
+					if from_pos.distance_to(mercenary.position) <= max_range:
+						targets.append(mercenary)
 		EnemyConfig.AttackPriority.TURRET:
 			for turret in turrets_container.get_children():
 				if turret is Turret and is_instance_valid(turret):
@@ -351,14 +357,17 @@ func _create_enemy_projectile(enemy: Enemy, target: Node2D) -> void:
 	projectile.damage = enemy.config.damage
 	projectile.speed = enemy.config.projectile_speed
 	projectile.color = enemy.config.color
-	projectile.hit_target.connect(_on_projectile_hit.bind(projectile))
+	projectile.hit_target.connect(_on_projectile_hit)
 	projectiles_container.add_child(projectile)
 
 func _on_projectile_hit(projectile: Projectile, target: Node2D) -> void:
-	if not is_instance_valid(target):
+	if not is_instance_valid(target) or not is_instance_valid(projectile):
 		return
 	
 	var damage = projectile.damage
+	if damage <= 0:
+		return
+	
 	if target is Player:
 		var actual_damage = max(1.0, damage - player_armor)
 		target.take_damage(actual_damage)
@@ -373,21 +382,22 @@ func _on_projectile_hit(projectile: Projectile, target: Node2D) -> void:
 		target.take_damage(actual_damage)
 	elif target is Enemy:
 		target.take_damage(damage)
-	elif target is Mercenary:
-		target.take_damage(damage)
 
 func _create_mercenary_projectile(mercenary: Mercenary, target: Node2D) -> void:
 	# Create projectile for ranged mercenary
 	var projectile = Node2D.new()
 	projectile.set_script(preload("res://scripts/projectile.gd"))
+	# Add to tree first so script is fully initialized
+	projectiles_container.add_child(projectile)
+	# Set properties after adding to tree
 	projectile.position = mercenary.position
 	projectile.target = target
 	projectile.source = mercenary
 	projectile.damage = mercenary.config.damage
 	projectile.speed = 250.0
 	projectile.color = mercenary.config.color
-	projectile.hit_target.connect(_on_projectile_hit.bind(projectile))
-	projectiles_container.add_child(projectile)
+	# Connect signal after adding to tree
+	projectile.hit_target.connect(_on_projectile_hit)
 
 func _create_weapon_projectile(from: Vector2, to: Node2D, damage: float, color: Color) -> void:
 	var projectile = Node2D.new()
@@ -397,7 +407,7 @@ func _create_weapon_projectile(from: Vector2, to: Node2D, damage: float, color: 
 	projectile.damage = damage
 	projectile.speed = 300.0
 	projectile.color = color
-	projectile.hit_target.connect(_on_projectile_hit.bind(projectile))
+	projectile.hit_target.connect(_on_projectile_hit)
 	projectiles_container.add_child(projectile)
 
 func _spawn_enemy_drops(enemy: Enemy) -> void:
@@ -908,6 +918,7 @@ func _on_buy_bot(zone: TileGrid.Zone) -> void:
 				break
 	
 	bot.position = tile_grid.position + tile_grid.grid_to_world(spawn_cell)
+	bot.speed_multiplier = game_config.global_speed_multiplier
 	
 	bot.deposited_resource.connect(_on_bot_deposited)
 	bot.died.connect(_on_bot_died)
@@ -959,6 +970,7 @@ func _on_buy_mercenary(mtype: Mercenary.MercenaryType) -> void:
 				break
 	
 	mercenary.position = tile_grid.position + tile_grid.grid_to_world(spawn_cell)
+	mercenary.main_ref = self
 	mercenary.died.connect(_on_mercenary_died)
 	mercenaries_container.add_child(mercenary)
 	_refresh_shop()

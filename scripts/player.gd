@@ -13,6 +13,7 @@ const PICKUP_DISTANCE := 20.0
 
 var health: float
 var move_speed: float = 180.0
+var base_move_speed: float = 180.0
 var target_position: Vector2
 var is_moving := false
 var carried_resource: int = -1
@@ -32,11 +33,16 @@ func _process(delta: float) -> void:
 		var direction = (target_position - position).normalized()
 		var distance = position.distance_to(target_position)
 		
-		if distance < move_speed * delta:
+		var main = get_tree().get_first_node_in_group("main")
+		var speed_mult = 1.0
+		if main and "game_config" in main:
+			speed_mult = main.game_config.global_speed_multiplier
+		var effective_speed = move_speed * speed_mult
+		if distance < effective_speed * delta:
 			position = target_position
 			is_moving = false
 		else:
-			position += direction * move_speed * delta
+			position += direction * effective_speed * delta
 	
 	# Weapon cooldown (only decrease, don't reset - main.gd handles attacks)
 	if attack_timer > 0:

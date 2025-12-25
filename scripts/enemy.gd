@@ -36,9 +36,22 @@ func _process(delta: float) -> void:
 	# Check for better targets nearby (distance-based scoring)
 	_check_for_better_target()
 	
+	# If no target, try to find one
+	if not target or not is_instance_valid(target):
+		_find_new_target()
+		# If still no target, check if base is close enough to attack
+		if not target and base_target and is_instance_valid(base_target):
+			var dist_to_base = position.distance_to(base_target.position)
+			if dist_to_base <= config.attack_range * 1.5:
+				target = base_target
+	
 	if target and is_instance_valid(target):
 		var dist = position.distance_to(target.position)
-		if dist <= config.attack_range:
+		# Base has a larger attack range (it's a big target)
+		var attack_range = config.attack_range
+		if target is Base:
+			attack_range = config.attack_range * 1.5
+		if dist <= attack_range:
 			_try_attack()
 		else:
 			_move_toward_target(delta)
@@ -88,8 +101,12 @@ func _check_for_better_target() -> void:
 func _move_toward_target(delta: float) -> void:
 	if not target:
 		return
+	var main = get_parent().get_parent()
+	var speed_mult = 1.0
+	if main and "game_config" in main:
+		speed_mult = main.game_config.global_speed_multiplier
 	var direction = (target.position - position).normalized()
-	position += direction * config.move_speed * delta
+	position += direction * config.move_speed * speed_mult * delta
 
 func _wander_toward_base(delta: float) -> void:
 	if not base_target or not is_instance_valid(base_target):
@@ -97,9 +114,13 @@ func _wander_toward_base(delta: float) -> void:
 		return
 	
 	is_wandering = true
+	var main = get_parent().get_parent()
+	var speed_mult = 1.0
+	if main and "game_config" in main:
+		speed_mult = main.game_config.global_speed_multiplier
 	var direction = (base_target.position - position).normalized()
 	# Move slower when wandering
-	position += direction * config.move_speed * WANDER_SPEED_MULT * delta
+	position += direction * config.move_speed * WANDER_SPEED_MULT * speed_mult * delta
 
 func _find_base_target() -> void:
 	var main = get_parent().get_parent()
