@@ -16,6 +16,8 @@ enum AttackPriority { PLAYER, BOT, TURRET }
 @export var size: float = 12.0
 @export var color: Color = Color.WHITE
 @export var priority_list: Array[AttackPriority] = [AttackPriority.BOT, AttackPriority.PLAYER, AttackPriority.TURRET]
+@export var is_ranged: bool = false  # If true, enemy attacks from range with projectiles
+@export var projectile_speed: float = 200.0  # Speed of ranged projectiles
 
 static func get_all_configs() -> Dictionary:
 	var configs: Dictionary = {}
@@ -87,5 +89,44 @@ static func get_all_configs() -> Dictionary:
 	var shadow_priorities: Array[AttackPriority] = [AttackPriority.TURRET, AttackPriority.PLAYER, AttackPriority.BOT]
 	shadow.priority_list = shadow_priorities
 	configs[Enemy.EnemyType.SHADOW] = shadow
+	
+	# Ranged enemies for later stages
+	# Archer Goblin (ranged variant)
+	var archer_goblin = EnemyConfig.new()
+	archer_goblin.enemy_type = Enemy.EnemyType.ARCHER_GOBLIN
+	archer_goblin.name = "Archer Goblin"
+	archer_goblin.max_health = 25.0
+	archer_goblin.damage = 6.0
+	archer_goblin.armor = 0.0
+	archer_goblin.move_speed = 70.0
+	archer_goblin.attack_range = 120.0  # Long range
+	archer_goblin.attack_cooldown = 2.0
+	archer_goblin.coin_reward = 8
+	archer_goblin.size = 14.0
+	archer_goblin.color = Color("#f59e0b")
+	archer_goblin.is_ranged = true
+	archer_goblin.projectile_speed = 250.0
+	var archer_priorities: Array[AttackPriority] = [AttackPriority.TURRET, AttackPriority.PLAYER, AttackPriority.BOT]
+	archer_goblin.priority_list = archer_priorities
+	configs[Enemy.EnemyType.ARCHER_GOBLIN] = archer_goblin
+	
+	# Mage Demon (ranged variant)
+	var mage_demon = EnemyConfig.new()
+	mage_demon.enemy_type = Enemy.EnemyType.MAGE_DEMON
+	mage_demon.name = "Mage Demon"
+	mage_demon.max_health = 50.0
+	mage_demon.damage = 12.0
+	mage_demon.armor = 2.0
+	mage_demon.move_speed = 50.0
+	mage_demon.attack_range = 150.0  # Very long range
+	mage_demon.attack_cooldown = 1.5
+	mage_demon.coin_reward = 25
+	mage_demon.size = 18.0
+	mage_demon.color = Color("#a855f7")
+	mage_demon.is_ranged = true
+	mage_demon.projectile_speed = 200.0
+	var mage_priorities: Array[AttackPriority] = [AttackPriority.TURRET, AttackPriority.BOT, AttackPriority.PLAYER]
+	mage_demon.priority_list = mage_priorities
+	configs[Enemy.EnemyType.MAGE_DEMON] = mage_demon
 	
 	return configs

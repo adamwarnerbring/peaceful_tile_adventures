@@ -77,16 +77,8 @@ func _find_and_attack_target() -> void:
 func _attack(target: Enemy) -> void:
 	attack_timer = attack_speed
 	
-	if aoe_radius > 0:
-		var main = get_parent().get_parent()
-		if main and main.has_method("get_enemies"):
-			for enemy in main.get_enemies():
-				if is_instance_valid(enemy):
-					var dist = target.position.distance_to(enemy.position)
-					if dist <= aoe_radius:
-						enemy.take_damage(damage)
-	else:
-		target.take_damage(damage)
+	# Single target attack only
+	target.take_damage(damage)
 
 func take_damage(amount: float) -> void:
 	health -= amount

@@ -21,11 +21,8 @@ var current_tab: String = "Zones"
 var tab_contents: Dictionary = {}  # tab_name -> GridContainer
 @onready var base_health_label: Label = $UI/BaseHealthLabel
 
-const PICKUP_DISTANCE := 25.0
-const SPAWN_INTERVAL := 2.5  # Slower resource spawn
-const ENEMY_SPAWN_INTERVAL := 4.0
-const MAX_RESOURCES_PER_ZONE := 8
-const MIN_ENEMY_SPAWN_DISTANCE := 200.0  # Minimum distance from player
+# Game configuration
+var game_config: GameConfig = GameConfig.get_default_config()
 
 var coins: int = 0
 var max_coins: int = 1000  # Gold storage capacity
@@ -35,6 +32,10 @@ var enemy_spawn_timer: float = 0.0
 var total_coins_earned: int = 0  # Stats tracking
 var base_weapon_level: int = 0  # Base auto-attack level
 var base_attack_timer: float = 0.0
+var player_respawn_timer: float = 0.0
+var is_player_dead: bool = false
+var projectiles_container: Node2D  # Container for projectiles
+var projectile_scene: PackedScene
 
 var bot_scene: PackedScene
 var enemy_scene: PackedScene
@@ -82,6 +83,11 @@ func _ready() -> void:
 	bot_scene = preload("res://scenes/collector_bot.tscn")
 	enemy_scene = preload("res://scenes/enemy.tscn")
 	turret_scene = preload("res://scenes/turret.tscn")
+	# Create projectiles container
+	projectiles_container = Node2D.new()
+	projectiles_container.name = "Projectiles"
+	add_child(projectiles_container)
+	# Projectile scene will be created programmatically
 	
 	# Initialize bot counts
 	for zone in [TileGrid.Zone.FOREST, TileGrid.Zone.CAVE, TileGrid.Zone.CRYSTAL, TileGrid.Zone.VOLCANO, TileGrid.Zone.ABYSS]:
@@ -136,7 +142,8 @@ func _ready() -> void:
 	owned_weapons.append(sword)
 	player.equip_weapon(sword)
 	
-	coins = 30
+	coins = game_config.starting_coins
+	max_coins = game_config.starting_max_coins
 	_update_ui()
 
 func _setup_shop() -> void:
@@ -154,22 +161,25 @@ func _spawn_initial_resources() -> void:
 		tile_grid.spawn_resource_in_zone(TileGrid.Zone.FOREST)
 
 func _process(delta: float) -> void:
-	_check_pickups()
-	_check_base_deposit()
-	_process_player_combat(delta)
+	_process_player_respawn(delta)
+	if not is_player_dead:
+		_check_pickups()
+		_check_base_deposit()
+		_process_player_combat(delta)
 	_process_enemy_attacks()
-	_process_health_regen(delta)
+	if not is_player_dead:
+		_process_health_regen(delta)
 	_process_base_health_regen(delta)
 	_process_base_weapon(delta)
 	_check_shop_refresh()
 	
 	spawn_timer += delta
-	if spawn_timer >= SPAWN_INTERVAL:
+	if spawn_timer >= game_config.resource_spawn_interval:
 		spawn_timer = 0.0
 		_spawn_resources()
 	
 	enemy_spawn_timer += delta
-	if enemy_spawn_timer >= ENEMY_SPAWN_INTERVAL:
+	if enemy_spawn_timer >= game_config.enemy_spawn_interval:
 		enemy_spawn_timer = 0.0
 		_spawn_enemies()
 	
@@ -178,7 +188,7 @@ func _process(delta: float) -> void:
 func _spawn_resources() -> void:
 	for zone in [TileGrid.Zone.FOREST, TileGrid.Zone.CAVE, TileGrid.Zone.CRYSTAL, TileGrid.Zone.VOLCANO, TileGrid.Zone.ABYSS]:
 		if tile_grid.is_zone_unlocked(zone):
-			if tile_grid.count_resources_in_zone(zone) < MAX_RESOURCES_PER_ZONE:
+			if tile_grid.count_resources_in_zone(zone) < game_config.max_resources_per_zone:
 				# Spawn resources up to tier 11 (new max)
 				tile_grid.spawn_resource_in_zone(zone)
 
@@ -192,31 +202,10 @@ func _spawn_enemies() -> void:
 				_spawn_enemy_in_zone(zone)
 
 func _spawn_enemy_in_zone(zone: TileGrid.Zone) -> void:
-	# Try to find a spawn location away from player
-	var attempts = 20
-	var cell = Vector2i(-1, -1)
-	
-	for _i in attempts:
-		var test_cell = tile_grid.get_random_cell_in_zone(zone)
-		if test_cell.x < 0:
-			continue
-		
-		var world_pos = tile_grid.position + tile_grid.grid_to_world(test_cell)
-		var dist_from_player = world_pos.distance_to(player.position)
-		
-		# Accept if far enough from player, or if off-screen
-		var viewport_size = get_viewport().get_visible_rect().size
-		var is_offscreen = world_pos.x < 0 or world_pos.x > viewport_size.x or world_pos.y < 0 or world_pos.y > viewport_size.y
-		
-		if dist_from_player >= MIN_ENEMY_SPAWN_DISTANCE or is_offscreen:
-			cell = test_cell
-			break
-	
-	# If no good spot found, use any cell (spawn can be off-screen)
+	# Spawn enemies at map edges only
+	var cell = tile_grid.get_random_edge_cell_in_zone(zone)
 	if cell.x < 0:
-		cell = tile_grid.get_random_cell_in_zone(zone)
-		if cell.x < 0:
-			return
+		return
 	
 	var enemy = enemy_scene.instantiate() as Enemy
 	enemy.enemy_type = Enemy.get_type_for_zone(zone)
@@ -291,16 +280,10 @@ func _process_player_combat(_delta: float) -> void:
 func _player_attack(target: Enemy) -> void:
 	player.attack_timer = player.equipped_weapon.attack_speed
 	var damage = player.get_weapon_damage() + damage_boost
-	var aoe = player.equipped_weapon.aoe_radius
 	
-	if aoe > 0:
-		# AoE attack
-		for enemy in get_enemies():
-			var dist = target.position.distance_to(enemy.position)
-			if dist <= aoe:
-				enemy.take_damage(damage)
-	else:
-		target.take_damage(damage)
+	# Single target attack only - create projectile for visual
+	_create_weapon_projectile(player.position, target, damage, player.equipped_weapon.color)
+	target.take_damage(damage)
 
 func _process_enemy_attacks() -> void:
 	for enemy in get_enemies():
@@ -315,23 +298,85 @@ func _on_enemy_attacked(target: Node2D) -> void:
 	# Find which enemy attacked
 	for enemy in get_enemies():
 		if enemy.target == target:
-			var damage = enemy.config.damage
-			if target is Player:
-				var actual_damage = max(1.0, damage - player_armor)
-				target.take_damage(actual_damage)
-			elif target is CollectorBot:
-				target.take_damage(damage)
-			elif target is Turret:
-				target.take_damage(damage)
-			elif target is Base:
-				var actual_damage = max(1.0, damage - base_armor)
-				target.take_damage(actual_damage)
+			# Check if ranged enemy - create projectile instead
+			if enemy.config.is_ranged:
+				_create_enemy_projectile(enemy, target)
+			else:
+				# Melee attack
+				var damage = enemy.config.damage
+				if target is Player:
+					var actual_damage = max(1.0, damage - player_armor)
+					target.take_damage(actual_damage)
+				elif target is CollectorBot:
+					target.take_damage(damage)
+				elif target is Turret:
+					target.take_damage(damage)
+				elif target is Base:
+					var actual_damage = max(1.0, damage - base_armor)
+					target.take_damage(actual_damage)
 			break
+
+func _create_enemy_projectile(enemy: Enemy, target: Node2D) -> void:
+	# Create projectile node
+	var projectile = Node2D.new()
+	projectile.set_script(preload("res://scripts/projectile.gd"))
+	projectile.position = enemy.position
+	projectile.target = target
+	projectile.source = enemy
+	projectile.damage = enemy.config.damage
+	projectile.speed = enemy.config.projectile_speed
+	projectile.color = enemy.config.color
+	projectile.hit_target.connect(_on_projectile_hit.bind(projectile))
+	projectiles_container.add_child(projectile)
+
+func _on_projectile_hit(projectile: Projectile, target: Node2D) -> void:
+	if not is_instance_valid(target):
+		return
+	
+	var damage = projectile.damage
+	if target is Player:
+		var actual_damage = max(1.0, damage - player_armor)
+		target.take_damage(actual_damage)
+	elif target is CollectorBot:
+		target.take_damage(damage)
+	elif target is Turret:
+		target.take_damage(damage)
+	elif target is Base:
+		var actual_damage = max(1.0, damage - base_armor)
+		target.take_damage(actual_damage)
+	elif target is Enemy:
+		target.take_damage(damage)
+
+func _create_weapon_projectile(from: Vector2, to: Node2D, damage: float, color: Color) -> void:
+	var projectile = Node2D.new()
+	projectile.set_script(preload("res://scripts/projectile.gd"))
+	projectile.position = from
+	projectile.target = to
+	projectile.damage = damage
+	projectile.speed = 300.0
+	projectile.color = color
+	projectile.hit_target.connect(_on_projectile_hit.bind(projectile))
+	projectiles_container.add_child(projectile)
+
+func _spawn_enemy_drops(enemy: Enemy) -> void:
+	# Drop coins or resources based on enemy level
+	var zone = tile_grid.get_zone_at(tile_grid.world_to_grid(enemy.position - tile_grid.position))
+	var danger = tile_grid.get_zone_danger(zone)
+	
+	# Drop chance increases with danger level
+	if randf() < 0.3 + (danger * 0.1):  # 30-80% drop chance
+		# Spawn resource pickup at enemy position
+		var drop_tier = min(2, danger - 1)  # Tier 0-2 based on zone
+		if drop_tier >= 0:
+			tile_grid.spawn_resource(tile_grid.world_to_grid(enemy.position - tile_grid.position), drop_tier)
 
 func _on_enemy_died(enemy: Enemy) -> void:
 	var reward = Enemy.get_coin_reward(enemy.enemy_type)
 	coins = mini(coins + reward, max_coins)  # Respect gold capacity
 	total_coins_earned += reward
+	
+	# Enemy drops based on level/zone
+	_spawn_enemy_drops(enemy)
 
 func _on_base_health_changed(current: float, maximum: float) -> void:
 	if base_health_label:
@@ -348,6 +393,17 @@ func _on_base_destroyed() -> void:
 	game_over_label.add_theme_color_override("font_color", Color("#ef4444"))
 	game_over_label.anchors_preset = Control.PRESET_FULL_RECT
 	$UI.add_child(game_over_label)
+
+func _process_player_respawn(delta: float) -> void:
+	if is_player_dead:
+		player_respawn_timer -= delta
+		if player_respawn_timer <= 0:
+			# Respawn player at base
+			var start_grid = Vector2i(TileGrid.GRID_SIZE.x / 2, TileGrid.GRID_SIZE.y - 4)
+			player.position = tile_grid.position + tile_grid.grid_to_world(start_grid)
+			player.respawn()
+			player.visible = true
+			is_player_dead = false
 
 func _process_base_health_regen(delta: float) -> void:
 	if base_health_regen > 0 and base.health < base.max_health:
@@ -388,13 +444,9 @@ func _on_turret_died() -> void:
 	pass  # Could add notification
 
 func _on_player_died() -> void:
-	# Respawn player at base after delay
+	is_player_dead = true
+	player_respawn_timer = game_config.player_respawn_time
 	player.visible = false
-	await get_tree().create_timer(2.0).timeout
-	var start_grid = Vector2i(TileGrid.GRID_SIZE.x / 2, TileGrid.GRID_SIZE.y - 4)
-	player.position = tile_grid.position + tile_grid.grid_to_world(start_grid)
-	player.respawn()
-	player.visible = true
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
@@ -422,6 +474,8 @@ func _handle_touch(touch_pos: Vector2) -> void:
 func _try_place_turret(grid_pos: Vector2i) -> void:
 	if not tile_grid.is_cell_accessible(grid_pos):
 		return
+	if tile_grid.is_base_area(grid_pos):
+		return  # Cannot place turrets in base area
 	if tile_grid.get_turret_at(grid_pos) != null:
 		return
 	
@@ -440,6 +494,8 @@ func _try_place_turret(grid_pos: Vector2i) -> void:
 	turrets_container.add_child(turret)
 	
 	is_placing_turret = false
+	tile_grid.show_turret_placement = false
+	tile_grid.queue_redraw()
 	_update_ui()
 
 func _is_touching_ui(pos: Vector2) -> bool:
@@ -466,7 +522,7 @@ func _check_pickups() -> void:
 			if resource:
 				var resource_global = tile_grid.position + resource.position
 				var dist = player.position.distance_to(resource_global)
-				if dist < PICKUP_DISTANCE:
+				if dist < game_config.pickup_distance:
 					var tier = resource.collect()
 					player.pickup_resource(tier)
 					tile_grid.remove_resource_at(check_pos)
@@ -1059,11 +1115,8 @@ func _populate_stats() -> void:
 	vbox.add_child(total_coins_label)
 
 func _update_ui() -> void:
-	# Show coins with capacity
-	var coin_text = "🪙 " + str(coins)
-	if coins >= max_coins:
-		coin_text += " [FULL]"
-	coin_label.text = coin_text
+	# Show coins with capacity: current / max
+	coin_label.text = "🪙 " + str(coins) + " / " + str(max_coins)
 	health_label.text = "❤️ " + str(int(player.health)) + "/" + str(int(player.max_health))
 	
 	if base_health_label:

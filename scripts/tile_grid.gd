@@ -16,6 +16,7 @@ var grid_resources: Array[Array] = []
 var grid_zones: Array[Array] = []
 var grid_turrets: Array[Array] = []  # Turret placement
 var resource_scene: PackedScene
+var show_turret_placement: bool = false  # Show valid placement indicators
 
 var unlocked_zones: Dictionary = {
 	Zone.BASE: true,
@@ -42,7 +43,7 @@ var zone_colors: Dictionary = {
 	Zone.ABYSS: [Color("#1a1a2e"), Color("#16213e")],
 }
 
-var locked_color := Color("#0f172a")
+var locked_color := Color("#050510")  # Very dark for locked zones
 
 var zone_tiers: Dictionary = {
 	Zone.FOREST: [0, 1],
@@ -145,37 +146,67 @@ func _draw() -> void:
 				var bg_color = colors[0] if (x + y) % 2 == 0 else colors[1]
 				draw_rect(rect, bg_color)
 			else:
-				var dark = locked_color if (x + y) % 2 == 0 else locked_color.lightened(0.05)
-				draw_rect(rect, dark)
+				# Locked zones - very dark, no variation
+				draw_rect(rect, locked_color)
 	
 	# Draw zone boundaries with curves
 	_draw_curved_zone_boundaries()
+	
+	# Draw turret placement indicators
+	if show_turret_placement:
+		_draw_turret_placement_indicators()
+
+func _draw_turret_placement_indicators() -> void:
+	# Show valid/invalid placement areas for turrets
+	for x in GRID_SIZE.x:
+		for y in GRID_SIZE.y:
+			var grid_pos = Vector2i(x, y)
+			var rect = Rect2(Vector2(x, y) * CELL_SIZE, Vector2(CELL_SIZE, CELL_SIZE))
+			
+			if is_base_area(grid_pos):
+				# Invalid: base area (red tint)
+				draw_rect(rect, Color(1.0, 0.0, 0.0, 0.3))
+			elif get_turret_at(grid_pos) != null:
+				# Invalid: already has turret (orange tint)
+				draw_rect(rect, Color(1.0, 0.5, 0.0, 0.3))
+			elif is_cell_accessible(grid_pos):
+				# Valid placement (green tint)
+				draw_rect(rect, Color(0.0, 1.0, 0.0, 0.2))
 
 func _draw_curved_zone_boundaries() -> void:
-	# Draw subtle boundary lines between zones
+	# Draw subtle boundary lines between unlocked zones only
 	for x in range(1, GRID_SIZE.x):
 		for y in range(1, GRID_SIZE.y):
 			var current_zone = grid_zones[x][y]
 			var left_zone = grid_zones[x-1][y]
 			var top_zone = grid_zones[x][y-1]
 			
-			if current_zone != left_zone and current_zone != Zone.BASE and left_zone != Zone.BASE:
-				var colors = zone_colors[current_zone]
-				draw_line(
-					Vector2(x, y) * CELL_SIZE,
-					Vector2(x, y + 1) * CELL_SIZE,
-					colors[1].lightened(0.2),
-					1.0
-				)
+			# Only draw boundaries between unlocked zones
+			var current_unlocked = unlocked_zones.get(current_zone, false)
+			var left_unlocked = unlocked_zones.get(left_zone, false)
+			var top_unlocked = unlocked_zones.get(top_zone, false)
 			
+			# Draw vertical boundary
+			if current_zone != left_zone and current_zone != Zone.BASE and left_zone != Zone.BASE:
+				if current_unlocked and left_unlocked:
+					var colors = zone_colors[current_zone]
+					draw_line(
+						Vector2(x, y) * CELL_SIZE,
+						Vector2(x, y + 1) * CELL_SIZE,
+						colors[1].lightened(0.2),
+						1.0
+					)
+			
+			# Draw horizontal boundary
 			if current_zone != top_zone and current_zone != Zone.BASE and top_zone != Zone.BASE:
-				var colors = zone_colors[current_zone]
-				draw_line(
-					Vector2(x, y) * CELL_SIZE,
-					Vector2(x + 1, y) * CELL_SIZE,
-					colors[1].lightened(0.2),
-					1.0
-				)
+				if current_unlocked and top_unlocked:
+					var colors = zone_colors[current_zone]
+					draw_line(
+						Vector2(x, y) * CELL_SIZE,
+						Vector2(x + 1, y) * CELL_SIZE,
+						colors[1].lightened(0.2),
+						1.0
+					)
 
 func unlock_zone(zone: Zone) -> bool:
 	if unlocked_zones.get(zone, false):
@@ -317,6 +348,54 @@ func get_random_cell_in_zone(zone: Zone) -> Vector2i:
 	if cells.is_empty():
 		return Vector2i(-1, -1)
 	return cells[randi() % cells.size()]
+
+func get_edge_cells_in_zone(zone: Zone) -> Array[Vector2i]:
+	# Find cells at the edges of the zone (map boundaries or adjacent to different zones/locked areas)
+	var edge_cells: Array[Vector2i] = []
+	
+	for x in GRID_SIZE.x:
+		for y in GRID_SIZE.y:
+			if grid_zones[x][y] != zone:
+				continue
+			
+			var is_edge = false
+			
+			# Check if at map boundary
+			if x == 0 or x == GRID_SIZE.x - 1 or y == 0 or y == GRID_SIZE.y - 1:
+				is_edge = true
+			else:
+				# Check if adjacent to different zone or locked area
+				var neighbors = [
+					Vector2i(x - 1, y),  # Left
+					Vector2i(x + 1, y),  # Right
+					Vector2i(x, y - 1),  # Top
+					Vector2i(x, y + 1)   # Bottom
+				]
+				
+				for neighbor in neighbors:
+					if not is_valid_cell(neighbor):
+						is_edge = true
+						break
+					
+					var neighbor_zone = grid_zones[neighbor.x][neighbor.y]
+					var neighbor_unlocked = unlocked_zones.get(neighbor_zone, false)
+					
+					# Edge if adjacent to different zone or locked area
+					if neighbor_zone != zone or not neighbor_unlocked:
+						is_edge = true
+						break
+			
+			if is_edge:
+				edge_cells.append(Vector2i(x, y))
+	
+	return edge_cells
+
+func get_random_edge_cell_in_zone(zone: Zone) -> Vector2i:
+	var edge_cells = get_edge_cells_in_zone(zone)
+	if edge_cells.is_empty():
+		# Fallback to any cell in zone if no edges found
+		return get_random_cell_in_zone(zone)
+	return edge_cells[randi() % edge_cells.size()]
 
 func get_grid_pixel_size() -> Vector2:
 	return Vector2(GRID_SIZE) * CELL_SIZE

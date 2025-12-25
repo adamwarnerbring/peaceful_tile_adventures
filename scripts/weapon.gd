@@ -63,7 +63,7 @@ static func create_cannon() -> Weapon:
 	w.projectile_speed = 150.0
 	w.aoe_radius = 60.0  # Big explosion
 	w.color = Color("#f97316")
-	w.price = 300
+	w.price = 1000
 	return w
 
 static func get_all_weapons() -> Array[Weapon]:

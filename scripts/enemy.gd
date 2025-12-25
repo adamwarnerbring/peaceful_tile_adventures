@@ -5,7 +5,7 @@ extends Node2D
 signal died(enemy: Enemy)
 signal attacked_target(target: Node2D)
 
-enum EnemyType { SLIME, GOBLIN, DEMON, SHADOW }
+enum EnemyType { SLIME, GOBLIN, DEMON, SHADOW, ARCHER_GOBLIN, MAGE_DEMON }
 
 @export var enemy_type: EnemyType = EnemyType.SLIME
 
@@ -133,7 +133,21 @@ func _find_new_target() -> void:
 func _try_attack() -> void:
 	if attack_timer <= 0:
 		attack_timer = config.attack_cooldown
-		attacked_target.emit(target)
+		
+		if config.is_ranged:
+			# Fire projectile
+			_fire_projectile()
+		else:
+			# Melee attack
+			attacked_target.emit(target)
+
+func _fire_projectile() -> void:
+	if not target or not is_instance_valid(target):
+		return
+	
+	# Create projectile (will be instantiated by main.gd)
+	# Signal to main to create projectile
+	attacked_target.emit(target)  # Main will handle projectile creation
 
 func take_damage(amount: float) -> void:
 	var actual_damage = max(1.0, amount - config.armor)
@@ -165,6 +179,10 @@ func _draw() -> void:
 			_draw_demon(size, color)
 		EnemyType.SHADOW:
 			_draw_shadow(size, color)
+		EnemyType.ARCHER_GOBLIN:
+			_draw_archer_goblin(size, color)
+		EnemyType.MAGE_DEMON:
+			_draw_mage_demon(size, color)
 	
 	# Draw health bar
 	var bar_width = size * 2
@@ -206,6 +224,30 @@ func _draw_shadow(size: float, color: Color) -> void:
 	draw_circle(Vector2(-4, -2), 3, Color.WHITE)
 	draw_circle(Vector2(4, -2), 3, Color.WHITE)
 
+func _draw_archer_goblin(size: float, color: Color) -> void:
+	# Goblin with bow
+	var points = PackedVector2Array([
+		Vector2(0, -size),
+		Vector2(size, size),
+		Vector2(-size, size)
+	])
+	draw_polygon(points, [color])
+	# Draw bow
+	draw_line(Vector2(size * 0.7, -size * 0.3), Vector2(size * 0.7, size * 0.3), color, 2.0)
+	draw_circle(Vector2(-4, -2), 3, Color.WHITE)
+	draw_circle(Vector2(4, -2), 3, Color.WHITE)
+
+func _draw_mage_demon(size: float, color: Color) -> void:
+	# Demon with staff
+	draw_circle(Vector2.ZERO, size, color)
+	draw_line(Vector2(-size/2, -size), Vector2(-size, -size*1.5), color, 3)
+	draw_line(Vector2(size/2, -size), Vector2(size, -size*1.5), color, 3)
+	# Draw staff
+	draw_line(Vector2(size * 0.8, -size * 0.5), Vector2(size * 0.8, size * 0.5), color, 3.0)
+	draw_circle(Vector2(size * 0.8, -size * 0.5), 4, Color("#fbbf24"))  # Staff orb
+	draw_circle(Vector2(-5, -3), 4, Color("#fbbf24"))
+	draw_circle(Vector2(5, -3), 4, Color("#fbbf24"))
+
 static func get_type_for_zone(zone: TileGrid.Zone) -> EnemyType:
 	match zone:
 		TileGrid.Zone.FOREST:
@@ -213,9 +255,17 @@ static func get_type_for_zone(zone: TileGrid.Zone) -> EnemyType:
 		TileGrid.Zone.CAVE:
 			return EnemyType.GOBLIN if randf() > 0.3 else EnemyType.SLIME
 		TileGrid.Zone.CRYSTAL:
-			return EnemyType.DEMON if randf() > 0.5 else EnemyType.GOBLIN
+			# Mix of melee and ranged
+			var rand = randf()
+			if rand > 0.6:
+				return EnemyType.ARCHER_GOBLIN
+			elif rand > 0.3:
+				return EnemyType.DEMON
+			else:
+				return EnemyType.GOBLIN
 		TileGrid.Zone.VOLCANO:
-			return EnemyType.DEMON
+			# More ranged enemies
+			return EnemyType.MAGE_DEMON if randf() > 0.4 else EnemyType.DEMON
 		TileGrid.Zone.ABYSS:
 			return EnemyType.SHADOW if randf() > 0.3 else EnemyType.DEMON
 		_:
