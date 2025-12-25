@@ -5,8 +5,8 @@ extends Resource
 @export var resource_spawn_interval: float = 2.5
 @export var max_resources_per_zone: int = 8
 @export var pickup_distance: float = 25.0
-@export var starting_coins: int = 100
-@export var starting_max_coins: int = 1000
+@export var starting_coins: int = 100000
+@export var starting_max_coins: int = 100000
 
 # Global speed multiplier (0.6 = 60% speed, makes everything slower)
 @export var global_speed_multiplier: float = 0.6
