@@ -5,7 +5,7 @@ extends Node2D
 signal deposited_resource(tier: int)
 signal died()
 
-enum State { IDLE, MOVING_TO_RESOURCE, MOVING_TO_BASE, FLEEING }
+enum State { IDLE, MOVING_TO_RESOURCE, MOVING_TO_BASE, FLEEING, RETURNING_TO_BASE }
 
 const MOVE_SPEED := 100.0
 var speed_multiplier: float = 1.0
@@ -22,6 +22,7 @@ var target_position: Vector2
 var carried_resource: int = -1
 var grid_ref: TileGrid
 var base_ref: Base
+var main_ref: Node2D = null  # Reference to main game controller to check wave status
 var idle_timer := 0.0
 
 const IDLE_WAIT := 0.5
@@ -34,17 +35,32 @@ func _process(delta: float) -> void:
 	match state:
 		State.IDLE:
 			_process_idle(delta)
-		State.MOVING_TO_RESOURCE, State.MOVING_TO_BASE, State.FLEEING:
+		State.MOVING_TO_RESOURCE, State.MOVING_TO_BASE, State.FLEEING, State.RETURNING_TO_BASE:
 			_process_moving(delta)
 	queue_redraw()
 
 func _process_idle(delta: float) -> void:
+	# Don't look for resources if returning to base or during wave
+	if state == State.RETURNING_TO_BASE:
+		return
+	
+	# Check if wave is active - if so, stay at base
+	if _is_wave_active():
+		if position.distance_to(base_ref.position) > 50.0:
+			# Too far from base, return
+			return_to_base()
+		return
+	
 	idle_timer += delta
 	if idle_timer >= IDLE_WAIT:
 		idle_timer = 0.0
 		_find_resource_target()
 
 func _find_resource_target() -> void:
+	# Don't look for resources during waves
+	if _is_wave_active():
+		return
+	
 	if not grid_ref:
 		return
 	var resource_cell = grid_ref.find_resource_in_zone(assigned_zone)
@@ -70,6 +86,9 @@ func _on_reached_target() -> void:
 		_try_deposit()
 	elif state == State.FLEEING:
 		state = State.IDLE
+	elif state == State.RETURNING_TO_BASE:
+		# Reached base, stay idle during wave
+		state = State.IDLE
 
 func _try_pickup() -> void:
 	if not grid_ref:
@@ -94,6 +113,26 @@ func _move_to_base() -> void:
 	var slot_pos = base_ref.get_slot_world_position(carried_resource)
 	target_position = slot_pos
 	state = State.MOVING_TO_BASE
+
+func return_to_base() -> void:
+	# Called when wave starts - return to base immediately
+	if not base_ref:
+		return
+	# If carrying resource, deposit it first
+	if carried_resource >= 0:
+		var slot_pos = base_ref.get_slot_world_position(carried_resource)
+		target_position = slot_pos
+		state = State.MOVING_TO_BASE
+	else:
+		# Just return to base center (stay close to base)
+		target_position = base_ref.position + Vector2(randf_range(-30, 30), randf_range(-30, 30))
+		state = State.RETURNING_TO_BASE
+
+func _is_wave_active() -> bool:
+	# Check if wave is active via main reference
+	if main_ref and "is_wave_active" in main_ref:
+		return main_ref.is_wave_active
+	return false
 
 func _try_deposit() -> void:
 	if not base_ref or carried_resource < 0:

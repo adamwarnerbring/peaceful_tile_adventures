@@ -13,7 +13,7 @@ extends Node2D
 @onready var carry_label: Label = $UI/CarryLabel
 @onready var shop_panel: PanelContainer = $UI/ShopPanel
 @onready var shop_toggle_btn: Button = $UI/ShopToggleBtn
-@onready var tab_buttons: HBoxContainer = $UI/ShopPanel/VBox/TabButtons
+@onready var tab_buttons: Control = $UI/ShopPanel/VBox/TabButtons  # Can be HBoxContainer or GridContainer
 @onready var content_area: ScrollContainer = $UI/ShopPanel/VBox/ContentArea
 @onready var stats_panel: PanelContainer = $UI/StatsPanel
 @onready var stats_toggle_btn: Button = $UI/StatsToggleBtn
@@ -21,6 +21,7 @@ extends Node2D
 var current_tab: String = "Zones"
 var tab_contents: Dictionary = {}  # tab_name -> GridContainer
 @onready var base_health_label: Label = $UI/BaseHealthLabel
+var wave_label: Label = null  # Wave status label (created dynamically)
 
 # Game configuration
 var game_config: GameConfig = GameConfig.get_default_config()
@@ -31,6 +32,13 @@ var previous_coins: int = 0  # Track for auto-refresh
 var spawn_timer: float = 0.0
 var enemy_spawn_timer: float = 0.0
 var total_coins_earned: int = 0  # Stats tracking
+
+# Wave/Round system
+var current_round: int = 1
+var wave_timer: float = 0.0
+var is_wave_active: bool = false
+var enemies_spawned_this_wave: int = 0
+var enemies_to_spawn_this_wave: int = 0
 var base_weapon_level: int = 0  # Base auto-attack level
 var base_attack_timer: float = 0.0
 var player_respawn_timer: float = 0.0
@@ -115,7 +123,7 @@ func _ready() -> void:
 	# Position grid: centered horizontally, small top margin, minimal bottom space
 	tile_grid.position = Vector2(
 		(viewport_size.x - grid_size.x) / 2,
-		48  # Small top margin for UI
+		75  # More top margin for wave label
 	)
 	# Adjust to minimize bottom space - align grid bottom with viewport bottom (with small margin)
 	var bottom_margin = 20  # Small margin from bottom
@@ -150,6 +158,21 @@ func _ready() -> void:
 	_setup_shop()
 	_spawn_initial_resources()
 	
+	# Create wave label at top of screen
+	wave_label = Label.new()
+	wave_label.name = "WaveLabel"
+	wave_label.add_theme_font_size_override("font_size", 20)
+	wave_label.add_theme_color_override("font_color", Color("#ef4444"))
+	wave_label.text = "😌 CHILL TIME - Round 1"
+	wave_label.position = Vector2(10, 50)  # Below other UI labels
+	wave_label.z_index = 10  # Make sure it's on top
+	$UI.add_child(wave_label)
+	
+	# Initialize wave system
+	wave_timer = 0.0
+	is_wave_active = false
+	current_round = 1
+	
 	# Give player starting weapon
 	var sword = Weapon.create_sword()
 	owned_weapons.append(sword)
@@ -173,6 +196,25 @@ func _spawn_initial_resources() -> void:
 	for _i in 4:
 		tile_grid.spawn_resource_in_zone(TileGrid.Zone.FOREST)
 
+func _spawn_initial_resources_for_peace() -> void:
+	# Spawn resources in all unlocked zones when peaceful period starts
+	for zone in [TileGrid.Zone.FOREST, TileGrid.Zone.CAVE, TileGrid.Zone.CRYSTAL, TileGrid.Zone.VOLCANO, TileGrid.Zone.ABYSS]:
+		if tile_grid.is_zone_unlocked(zone):
+			# Spawn 3-5 resources per zone
+			var count = randi_range(3, 5)
+			for _i in count:
+				tile_grid.spawn_resource_in_zone(zone)
+
+func _remove_all_resources() -> void:
+	# Remove all resources from the grid when wave starts
+	for x in TileGrid.GRID_SIZE.x:
+		for y in TileGrid.GRID_SIZE.y:
+			var grid_pos = Vector2i(x, y)
+			var resource = tile_grid.get_resource_at(grid_pos)
+			if resource:
+				resource.queue_free()
+				tile_grid.remove_resource_at(grid_pos)
+
 func _process(delta: float) -> void:
 	_process_player_respawn(delta)
 	if not is_player_dead:
@@ -186,15 +228,15 @@ func _process(delta: float) -> void:
 	_process_base_weapon(delta)
 	_check_shop_refresh()
 	
-	spawn_timer += delta
-	if spawn_timer >= game_config.resource_spawn_interval:
-		spawn_timer = 0.0
-		_spawn_resources()
+	# Only spawn resources during peaceful times
+	if not is_wave_active:
+		spawn_timer += delta
+		if spawn_timer >= game_config.resource_spawn_interval:
+			spawn_timer = 0.0
+			_spawn_resources()
 	
-	enemy_spawn_timer += delta
-	if enemy_spawn_timer >= game_config.enemy_spawn_interval:
-		enemy_spawn_timer = 0.0
-		_spawn_enemies()
+	# Wave/Round system
+	_process_waves(delta)
 	
 	_update_ui()
 
@@ -205,14 +247,87 @@ func _spawn_resources() -> void:
 				# Spawn resources up to tier 11 (new max)
 				tile_grid.spawn_resource_in_zone(zone)
 
-func _spawn_enemies() -> void:
-	# Spawn enemies in unlocked zones based on danger level
+func _process_waves(delta: float) -> void:
+	wave_timer += delta
+	
+	# Check if we should transition between chill and wave
+	if not is_wave_active:
+		# Chill time - no enemies
+		if wave_timer >= game_config.chill_time_duration:
+			# Start wave
+			_start_wave()
+	else:
+		# Wave active
+		if current_round >= game_config.continuous_waves_start_round:
+			# Continuous waves - spawn enemies continuously
+			enemy_spawn_timer += delta
+			if enemy_spawn_timer >= game_config.enemy_spawn_interval_wave:
+				enemy_spawn_timer = 0.0
+				_spawn_enemies_during_wave()
+		else:
+			# Limited wave - check if wave should end
+			if wave_timer >= game_config.wave_duration:
+				_end_wave()
+			else:
+				# Spawn enemies during wave
+				enemy_spawn_timer += delta
+				if enemy_spawn_timer >= game_config.enemy_spawn_interval_wave:
+					enemy_spawn_timer = 0.0
+					_spawn_enemies_during_wave()
+
+func _start_wave() -> void:
+	is_wave_active = true
+	wave_timer = 0.0
+	enemies_spawned_this_wave = 0
+	# Calculate enemies for this wave
+	enemies_to_spawn_this_wave = int(game_config.enemies_per_wave_base * pow(game_config.enemies_per_wave_increase, current_round - 1))
+	
+	# Remove all resources when wave starts
+	_remove_all_resources()
+	
+	# Make bots return to base
+	_return_bots_to_base()
+	
+	# Update wave label
+	if wave_label:
+		wave_label.text = "🌊 WAVE " + str(current_round) + " - " + str(int(game_config.wave_duration - wave_timer)) + "s"
+
+func _end_wave() -> void:
+	is_wave_active = false
+	wave_timer = 0.0
+	current_round += 1
+	enemies_spawned_this_wave = 0
+	
+	# Spawn resources when peaceful period starts
+	_spawn_initial_resources_for_peace()
+	
+	# Update wave label
+	if wave_label:
+		wave_label.text = "😌 CHILL TIME - Round " + str(current_round) + " in " + str(int(game_config.chill_time_duration - wave_timer)) + "s"
+
+func _spawn_enemies_during_wave() -> void:
+	# Spawn enemies in unlocked zones during wave
+	if current_round < game_config.continuous_waves_start_round:
+		# Limited wave - spawn up to wave limit
+		if enemies_spawned_this_wave >= enemies_to_spawn_this_wave:
+			return
+	
 	for zone in [TileGrid.Zone.FOREST, TileGrid.Zone.CAVE, TileGrid.Zone.CRYSTAL, TileGrid.Zone.VOLCANO, TileGrid.Zone.ABYSS]:
 		if tile_grid.is_zone_unlocked(zone) and zone != TileGrid.Zone.BASE:
 			var danger = tile_grid.get_zone_danger(zone)
 			# Higher danger = more likely to spawn
-			if randf() < danger * 0.15:
+			if randf() < danger * 0.2:
 				_spawn_enemy_in_zone(zone)
+				enemies_spawned_this_wave += 1
+				if current_round < game_config.continuous_waves_start_round:
+					if enemies_spawned_this_wave >= enemies_to_spawn_this_wave:
+						return
+
+func _return_bots_to_base() -> void:
+	# Make all bots return to base
+	for bot in get_bots():
+		if bot is CollectorBot:
+			bot.return_to_base()
 
 func _spawn_enemy_in_zone(zone: TileGrid.Zone) -> void:
 	# Spawn enemies at map edges only
@@ -640,6 +755,20 @@ func _create_tabs() -> void:
 	if not tab_buttons or not content_area:
 		return
 	
+	# Convert HBoxContainer to GridContainer for two rows if needed
+	if tab_buttons is HBoxContainer:
+		var parent = tab_buttons.get_parent()
+		var old_buttons = tab_buttons
+		var grid_container = GridContainer.new()
+		grid_container.columns = 4  # 4 tabs per row
+		grid_container.add_theme_constant_override("h_separation", 4)
+		grid_container.add_theme_constant_override("v_separation", 4)
+		grid_container.name = "TabButtons"
+		parent.remove_child(old_buttons)
+		parent.add_child(grid_container)
+		old_buttons.queue_free()
+		tab_buttons = grid_container
+	
 	# Clear existing tabs
 	for child in tab_buttons.get_children():
 		child.queue_free()
@@ -668,15 +797,15 @@ func _create_tabs() -> void:
 		tab_btn.text = tab_name
 		tab_btn.add_theme_font_size_override("font_size", 11)
 		tab_btn.add_theme_color_override("font_color", tab_color)
-		tab_btn.custom_minimum_size = Vector2(100, 30)
+		tab_btn.custom_minimum_size = Vector2(150, 45)
 		tab_btn.pressed.connect(_switch_tab.bind(tab_name))
 		tab_buttons.add_child(tab_btn)
 		
-		# Create content grid for this tab
+		# Create content grid for this tab (5 columns for compact layout)
 		var grid = GridContainer.new()
-		grid.columns = 2
-		grid.add_theme_constant_override("h_separation", 8)
-		grid.add_theme_constant_override("v_separation", 8)
+		grid.columns = 3
+		grid.add_theme_constant_override("h_separation", 3)
+		grid.add_theme_constant_override("v_separation", 3)
 		grid.visible = false
 		content_area.add_child(grid)
 		tab_contents[tab_name] = grid
@@ -684,7 +813,7 @@ func _create_tabs() -> void:
 func _switch_tab(tab_name: String) -> void:
 	current_tab = tab_name
 	
-	# Update button states
+	# Update button states (works for both HBoxContainer and GridContainer)
 	for btn in tab_buttons.get_children():
 		if btn is Button:
 			if btn.text == tab_name:
@@ -919,6 +1048,7 @@ func _on_buy_bot(zone: TileGrid.Zone) -> void:
 	
 	bot.position = tile_grid.position + tile_grid.grid_to_world(spawn_cell)
 	bot.speed_multiplier = game_config.global_speed_multiplier
+	bot.main_ref = self  # Give bot reference to main for wave checking
 	
 	bot.deposited_resource.connect(_on_bot_deposited)
 	bot.died.connect(_on_bot_died)
@@ -1119,8 +1249,8 @@ func _populate_base_upgrades_tab(grid: GridContainer) -> void:
 
 func _create_shop_button() -> Button:
 	var btn = Button.new()
-	btn.add_theme_font_size_override("font_size", 10)
-	btn.custom_minimum_size = Vector2(160, 60)
+	btn.add_theme_font_size_override("font_size", 13)
+	btn.custom_minimum_size = Vector2(200, 90)  # Smaller for 5-column layout
 	btn.text = ""
 	return btn
 
@@ -1277,6 +1407,17 @@ func _populate_stats() -> void:
 	vbox.add_child(total_coins_label)
 
 func _update_ui() -> void:
+	# Update wave label
+	if wave_label:
+		if is_wave_active:
+			if current_round >= game_config.continuous_waves_start_round:
+				wave_label.text = "CONTINUOUS WAVES - Round " + str(current_round)
+			else:
+				var time_left = int(game_config.wave_duration - wave_timer)
+				wave_label.text = "WAVE " + str(current_round) + " - " + str(time_left) + "s"
+		else:
+			var time_left = int(game_config.chill_time_duration - wave_timer)
+			wave_label.text = "Time to farm - Round " + str(current_round) + " starts in " + str(time_left) + "s"
 	# Show coins with capacity: current / max
 	coin_label.text = "🪙 " + str(coins) + " / " + str(max_coins)
 	health_label.text = "❤️ " + str(int(player.health)) + "/" + str(int(player.max_health))

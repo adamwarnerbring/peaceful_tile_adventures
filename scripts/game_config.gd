@@ -14,6 +14,14 @@ extends Resource
 # Global speed multiplier (0.6 = 60% speed, makes everything slower)
 @export var global_speed_multiplier: float = 0.6
 
+# Wave/Round system
+@export var chill_time_duration: float = 30.0  # Seconds of peaceful resource collection
+@export var wave_duration: float = 60.0  # Seconds of enemy waves
+@export var enemy_spawn_interval_wave: float = 2.0  # Spawn interval during waves
+@export var continuous_waves_start_round: int = 10  # After this round, enemies spawn continuously
+@export var enemies_per_wave_base: int = 5  # Base number of enemies per wave
+@export var enemies_per_wave_increase: float = 1.5  # Multiplier per round
+
 # Map scaling
 @export var base_grid_size: Vector2i = Vector2i(20, 32)
 @export var grid_size_per_upgrade: Vector2i = Vector2i(4, 6)  # How much grid expands per upgrade
