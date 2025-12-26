@@ -10,6 +10,7 @@ var bob_offset := 0.0
 var base_y: float
 
 const ITEM_SIZE := 24.0
+var scale_factor: float = 1.0  # Scale factor for larger grids
 
 func _ready() -> void:
 	base_y = position.y
@@ -23,16 +24,21 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	var color = _get_tier_color(tier)
+	var size = ITEM_SIZE * scale_factor
 	
 	# Draw gem shape
 	var points = PackedVector2Array([
-		Vector2(0, -ITEM_SIZE/2),
-		Vector2(ITEM_SIZE/2, 0),
-		Vector2(0, ITEM_SIZE/2),
-		Vector2(-ITEM_SIZE/2, 0)
+		Vector2(0, -size/2),
+		Vector2(size/2, 0),
+		Vector2(0, size/2),
+		Vector2(-size/2, 0)
 	])
 	draw_polygon(points, [color])
-	draw_polyline(points + PackedVector2Array([points[0]]), Color.WHITE, 2.0)
+	draw_polyline(points + PackedVector2Array([points[0]]), Color.WHITE, 2.0 * scale_factor)
+
+func set_scale_factor(factor: float) -> void:
+	scale_factor = factor
+	queue_redraw()
 	
 	# Draw tier number
 	# (Label would need a child node, using simple indicator instead)

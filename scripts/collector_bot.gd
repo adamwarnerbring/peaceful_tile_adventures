@@ -24,6 +24,9 @@ var idle_timer := 0.0
 
 const IDLE_WAIT := 0.5
 
+# Scale factor based on grid size (smaller bots on larger grids)
+var scale_factor: float = 1.0
+
 func _ready() -> void:
 	queue_redraw()
 
@@ -105,23 +108,35 @@ func _try_deposit() -> void:
 	state = State.IDLE
 
 func _draw() -> void:
-	var size = 14.0
+	var size = 14.0 * scale_factor
+	var border_width = 2.0 * scale_factor
+	var antenna_length = 5.0 * scale_factor
+	var antenna_light = 7.0 * scale_factor
+	var antenna_circle = 3.0 * scale_factor
+	var eye_size = 3.0 * scale_factor
+	var carry_size = 7.0 * scale_factor
+	var carry_y = -18.0 * scale_factor
+	
 	draw_rect(Rect2(-size/2, -size/2, size, size), bot_color)
-	draw_rect(Rect2(-size/2, -size/2, size, size), bot_color.lightened(0.3), false, 2.0)
+	draw_rect(Rect2(-size/2, -size/2, size, size), bot_color.lightened(0.3), false, border_width)
 	
 	# Antenna
-	draw_line(Vector2(0, -size/2), Vector2(0, -size/2 - 5), bot_color.lightened(0.3), 2.0)
-	draw_circle(Vector2(0, -size/2 - 7), 3, bot_color.lightened(0.5))
+	draw_line(Vector2(0, -size/2), Vector2(0, -size/2 - antenna_length), bot_color.lightened(0.3), border_width)
+	draw_circle(Vector2(0, -size/2 - antenna_light), antenna_circle, bot_color.lightened(0.5))
 	
 	# Eyes
-	draw_rect(Rect2(-4, -3, 3, 3), Color("#1e293b"))
-	draw_rect(Rect2(1, -3, 3, 3), Color("#1e293b"))
+	draw_rect(Rect2(-4 * scale_factor, -3 * scale_factor, eye_size, eye_size), Color("#1e293b"))
+	draw_rect(Rect2(1 * scale_factor, -3 * scale_factor, eye_size, eye_size), Color("#1e293b"))
 	
 	# Carried resource
 	if carried_resource >= 0:
 		var carry_color = _get_tier_color(carried_resource)
-		draw_circle(Vector2(0, -18), 7, carry_color)
-		draw_circle(Vector2(0, -18), 7, Color.WHITE, false, 1.5)
+		draw_circle(Vector2(0, carry_y), carry_size, carry_color)
+		draw_circle(Vector2(0, carry_y), carry_size, Color.WHITE, false, 1.5 * scale_factor)
+
+func set_scale_factor(factor: float) -> void:
+	scale_factor = factor
+	queue_redraw()
 
 func _get_tier_color(tier: int) -> Color:
 	var colors: Array[Color] = [

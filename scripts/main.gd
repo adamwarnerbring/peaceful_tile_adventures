@@ -20,6 +20,14 @@ var tab_contents: Dictionary = {}  # tab_name -> GridContainer
 # Game configuration
 var game_config: GameConfig = GameConfig.get_default_config()
 
+# Stage progression configuration
+var progression_config: ProgressionConfig = ProgressionConfig.get_default_config()
+
+# Stage tracking
+var current_stage: int = 0
+var highest_tier_achieved: int = -1
+var can_upgrade_stage: bool = false
+
 var coins: int = 0
 var max_coins: int = 1000  # Gold storage capacity
 var previous_coins: int = 0  # Track for auto-refresh
@@ -79,29 +87,30 @@ func _ready() -> void:
 	
 	player.grid_ref = tile_grid
 	# Start player near base center
-	var start_grid = Vector2i(TileGrid.BASE_CENTER_X, TileGrid.BASE_CENTER_Y - 2)
+	var start_grid = Vector2i(tile_grid.BASE_CENTER_X, tile_grid.BASE_CENTER_Y - 2)
 	player.position = tile_grid.position + tile_grid.grid_to_world(start_grid)
 	
 	# Position base at the base center in the grid
 	base.position = tile_grid.position + tile_grid.get_base_center_world()
 	
 	base.resources_merged.connect(_on_resources_merged)
+	base.highest_tier_achieved.connect(_on_highest_tier_achieved)
 	tile_grid.zone_unlocked.connect(_on_zone_unlocked)
+	
+	# Initialize stage system
+	_initialize_stage()
 	
 	shop_toggle_btn.pressed.connect(_toggle_shop)
 	shop_panel.visible = false
 	stats_toggle_btn.pressed.connect(_toggle_stats)
 	stats_panel.visible = false
 	
-	# Initialize castle upgrade levels
+	# Initialize castle upgrade levels (keeping for compatibility, not used in stage system)
 	for upgrade in CastleUpgrade.get_all_upgrades():
 		if upgrade.is_one_time:
 			castle_upgrade_levels[upgrade.upgrade_type] = false
 		else:
 			castle_upgrade_levels[upgrade.upgrade_type] = 0
-	
-	# Initialize Level 0 (current map)
-	_initialize_level_0()
 	
 	_setup_shop()
 	_spawn_initial_resources()
@@ -109,6 +118,7 @@ func _ready() -> void:
 	coins = game_config.starting_coins
 	max_coins = game_config.starting_max_coins
 	_update_ui()
+	_check_stage_upgrade_requirement()
 
 func _setup_shop() -> void:
 	# Create tab buttons and content areas
@@ -117,32 +127,33 @@ func _setup_shop() -> void:
 	_switch_tab("Zones")  # Default to Zones tab
 
 func _spawn_initial_resources() -> void:
+	var scale_factor = _get_current_scale_factor()
 	for _i in 4:
-		tile_grid.spawn_resource_in_zone(TileGrid.Zone.FOREST)
+		tile_grid.spawn_resource_in_zone(TileGrid.Zone.FOREST, scale_factor)
 
 func _process(delta: float) -> void:
 	_check_pickups()
 	_check_base_deposit()
 	_check_shop_refresh()
 	
-	# Spawn resources continuously
+	# Spawn resources continuously (interval handled in _spawn_resources with stage multiplier)
 	spawn_timer += delta
-	if spawn_timer >= game_config.resource_spawn_interval:
+	var stage_config = progression_config.get_current_stage_config(current_stage)
+	var spawn_multiplier = stage_config.get("spawn_rate_multiplier", 1.0)
+	var adjusted_interval = game_config.resource_spawn_interval / spawn_multiplier
+	if spawn_timer >= adjusted_interval:
 		spawn_timer = 0.0
 		_spawn_resources()
 	
 	_update_ui()
 
 func _spawn_resources() -> void:
-	# Spawn resources for current level (Level 0 for now)
-	# In full implementation, would spawn for all unlocked levels
-	if not current_level or not current_level.is_unlocked:
-		return
-	
+	# Spawn resources for unlocked zones in current stage
+	var scale_factor = _get_current_scale_factor()
 	for zone in [TileGrid.Zone.FOREST, TileGrid.Zone.CAVE, TileGrid.Zone.CRYSTAL, TileGrid.Zone.VOLCANO, TileGrid.Zone.ABYSS]:
-		if current_level.is_zone_unlocked(zone):
+		if tile_grid.is_zone_unlocked(zone):
 			if tile_grid.count_resources_in_zone(zone) < game_config.max_resources_per_zone:
-				tile_grid.spawn_resource_in_zone(zone)
+				tile_grid.spawn_resource_in_zone(zone, scale_factor)
 
 func get_bots() -> Array:
 	var bots: Array = []
@@ -253,7 +264,7 @@ func _create_tabs() -> void:
 		var parent = tab_buttons.get_parent()
 		var old_buttons = tab_buttons
 		var grid_container = GridContainer.new()
-		grid_container.columns = 3  # 3 tabs per row
+		grid_container.columns = 4  # 4 tabs per row (Zones, Bots, Stage, Debug)
 		grid_container.add_theme_constant_override("h_separation", 4)
 		grid_container.add_theme_constant_override("v_separation", 4)
 		grid_container.name = "TabButtons"
@@ -269,11 +280,12 @@ func _create_tabs() -> void:
 		child.queue_free()
 	tab_contents.clear()
 	
-	# Define tabs (Castle includes all upgrades now)
+	# Define tabs (Stage Upgrade replaces Castle, Debug added)
 	var tabs = [
 		{"name": "Zones", "color": Color("#94a3b8")},
 		{"name": "Bots", "color": Color("#22c55e")},
-		{"name": "Castle", "color": Color("#a855f7")}
+		{"name": "Stage", "color": Color("#f59e0b")},
+		{"name": "Debug", "color": Color("#ef4444")}
 	]
 	
 	# Create tab buttons and content containers
@@ -334,14 +346,17 @@ func _refresh_shop() -> void:
 			_populate_zones_tab(grid)
 		"Bots":
 			_populate_bots_tab(grid)
-		"Castle":
-			_populate_castle_upgrades_tab(grid)
+		"Stage":
+			_populate_stage_upgrade_tab(grid)
+		"Debug":
+			_populate_debug_tab(grid)
 
 func _populate_zones_tab(grid: GridContainer) -> void:
 	for zone in zone_unlock_order:
 		var btn = _create_shop_button()
 		var is_unlocked = tile_grid.is_zone_unlocked(zone)
-		var price = tile_grid.get_zone_price(zone)
+		var base_price = tile_grid.get_zone_price(zone)
+		var price = progression_config.get_zone_price(base_price, current_stage)
 		var zname = tile_grid.get_zone_name(zone)
 		var can_unlock = _can_unlock_zone(zone)
 		
@@ -380,7 +395,8 @@ func _populate_bots_tab(grid: GridContainer) -> void:
 		var btn = _create_shop_button()
 		btn.add_theme_color_override("font_color", CollectorBot.get_zone_color(zone))
 		var is_zone_unlocked = tile_grid.is_zone_unlocked(zone)
-		var price = bot_prices.get(zone, 100)
+		var base_price = bot_prices.get(zone, 100)
+		var price = progression_config.get_bot_price(base_price, current_stage)
 		var count = bot_counts.get(zone, 0)
 		var zname = tile_grid.get_zone_name(zone)
 		
@@ -397,7 +413,8 @@ func _populate_bots_tab(grid: GridContainer) -> void:
 func _on_buy_zone(zone: TileGrid.Zone) -> void:
 	if not _can_unlock_zone(zone):
 		return
-	var price = tile_grid.get_zone_price(zone)
+	var base_price = tile_grid.get_zone_price(zone)
+	var price = progression_config.get_zone_price(base_price, current_stage)
 	if coins >= price:
 		coins -= price
 		total_coins_earned += price  # Track spending
@@ -407,13 +424,14 @@ func _on_buy_zone(zone: TileGrid.Zone) -> void:
 func _on_buy_bot(zone: TileGrid.Zone) -> void:
 	if not tile_grid.is_zone_unlocked(zone):
 		return
-	var price = bot_prices.get(zone, 100)
+	var base_price = bot_prices.get(zone, 100)
+	var price = progression_config.get_bot_price(base_price, current_stage)
 	if coins < price:
 		return
 	
 	coins -= price
 	bot_counts[zone] = bot_counts.get(zone, 0) + 1
-	bot_prices[zone] = int(price * 1.6)
+	bot_prices[zone] = int(base_price * 1.6)  # Store base price, multipliers applied on display
 	
 	var bot = bot_scene.instantiate() as CollectorBot
 	bot.assigned_zone = zone
@@ -424,7 +442,7 @@ func _on_buy_bot(zone: TileGrid.Zone) -> void:
 	# Spawn bot in front of base
 	var base_center = tile_grid.get_base_center_world()
 	var spawn_offset = Vector2i(0, -3)  # 3 cells in front (up) of base
-	var spawn_cell = Vector2i(TileGrid.BASE_CENTER_X, TileGrid.BASE_CENTER_Y - 3)
+	var spawn_cell = Vector2i(tile_grid.BASE_CENTER_X, tile_grid.BASE_CENTER_Y - 3)
 	
 	# Try to find empty cell near base front
 	var attempts = 10
@@ -439,6 +457,11 @@ func _on_buy_bot(zone: TileGrid.Zone) -> void:
 	bot.position = tile_grid.position + tile_grid.grid_to_world(spawn_cell)
 	bot.speed_multiplier = game_config.global_speed_multiplier * collection_speed_multiplier
 	bot.main_ref = self
+	
+	# Apply scale factor to bot
+	var scale_factor = _get_current_scale_factor()
+	if bot.has_method("set_scale_factor"):
+		bot.set_scale_factor(scale_factor)
 	
 	bot.deposited_resource.connect(_on_bot_deposited)
 	bots_container.add_child(bot)
@@ -542,11 +565,8 @@ func _populate_stats() -> void:
 
 func _update_ui() -> void:
 	# Show coins with capacity: current / max
-	coin_label.text = "🪙 " + str(coins) + " / " + str(max_coins)
-	
-	# Show level indicator if multiple levels unlocked
-	if max_unlocked_level > 0:
-		coin_label.text += " | Level " + str(max_unlocked_level + 1)
+	var stage_name = progression_config.get_stage_name(current_stage)
+	coin_label.text = "🪙 " + str(coins) + " / " + str(max_coins) + " | " + stage_name
 	
 	if player.is_carrying():
 		var tier = player.carried_resource
@@ -556,7 +576,136 @@ func _update_ui() -> void:
 		carry_label.text = "Tap to move"
 		carry_label.modulate = Color("#94a3b8")
 
-# Level Management Functions
+# Stage Management Functions
+
+func _get_current_scale_factor() -> float:
+	var stage_config = progression_config.get_current_stage_config(current_stage)
+	var grid_size = stage_config.get("grid_size", Vector2i(20, 32))
+	var base_grid_size = Vector2i(20, 32)
+	var scale_x = float(base_grid_size.x) / float(grid_size.x)
+	var scale_y = float(base_grid_size.y) / float(grid_size.y)
+	return min(scale_x, scale_y)
+
+func _initialize_stage() -> void:
+	# Initialize tile grid with stage-specific size
+	var stage_config = progression_config.get_current_stage_config(current_stage)
+	var grid_size = stage_config.get("grid_size", Vector2i(20, 32))
+	var max_tier = stage_config.get("max_tier", 11)
+	
+	tile_grid.initialize_grid(grid_size)
+	
+	# Set base inventory size based on max_tier
+	base.set_num_slots(max_tier)
+	
+	# Calculate and apply scale factor (smaller on larger grids)
+	var scale_factor = _get_current_scale_factor()
+	
+	# Apply scale to player
+	player.set_scale_factor(scale_factor)
+	
+	# Apply scale to existing resources
+	for x in tile_grid.GRID_SIZE.x:
+		for y in tile_grid.GRID_SIZE.y:
+			var resource = tile_grid.get_resource_at(Vector2i(x, y))
+			if resource:
+				resource.set_scale_factor(scale_factor)
+	
+	# Apply scale to existing bots
+	for bot in get_bots():
+		if bot and bot.has_method("set_scale_factor"):
+			bot.set_scale_factor(scale_factor)
+	
+	# Reposition grid on screen
+	call_deferred("_reposition_grid")
+	
+	# Reset zones (only BASE and FOREST unlocked)
+	tile_grid.reset_grid()
+	
+	# Update highest tier from base
+	highest_tier_achieved = base.get_highest_tier_achieved()
+	_check_stage_upgrade_requirement()
+
+func _reposition_grid() -> void:
+	var viewport_size = get_viewport().get_visible_rect().size
+	var grid_size = tile_grid.get_grid_pixel_size()
+	# Position grid: centered horizontally, small top margin
+	tile_grid.position = Vector2(
+		(viewport_size.x - grid_size.x) / 2,
+		50
+	)
+	# Adjust to minimize bottom space
+	var bottom_margin = 20
+	var target_bottom = viewport_size.y - bottom_margin
+	var current_bottom = tile_grid.position.y + grid_size.y
+	var adjustment = target_bottom - current_bottom
+	tile_grid.position.y += adjustment
+	
+	# Reposition player and base
+	var start_grid = Vector2i(tile_grid.BASE_CENTER_X, tile_grid.BASE_CENTER_Y - 2)
+	player.position = tile_grid.position + tile_grid.grid_to_world(start_grid)
+	base.position = tile_grid.position + tile_grid.get_base_center_world()
+
+func _check_stage_upgrade_requirement() -> void:
+	var stage_config = progression_config.get_current_stage_config(current_stage)
+	var max_tier = stage_config.get("max_tier", 11)
+	
+	can_upgrade_stage = (highest_tier_achieved >= max_tier)
+	
+	# Refresh shop if it's open on Stage tab
+	if shop_panel.visible and current_tab == "Stage":
+		_refresh_shop()
+
+func _on_highest_tier_achieved(tier: int) -> void:
+	if tier > highest_tier_achieved:
+		highest_tier_achieved = tier
+		_check_stage_upgrade_requirement()
+		print("Highest tier achieved: T", tier)
+
+func _on_upgrade_stage() -> void:
+	if not can_upgrade_stage:
+		return
+	
+	if not progression_config.has_next_stage(current_stage):
+		return
+	
+	# Upgrade to next stage
+	current_stage += 1
+	print("Upgrading to stage: ", progression_config.get_stage_name(current_stage))
+	
+	# Complete reset
+	_reset_stage()
+	
+	# Initialize new stage
+	_initialize_stage()
+	
+	# Refresh UI
+	_update_ui()
+	_refresh_shop()
+
+func _reset_stage() -> void:
+	# Clear all resources
+	tile_grid.reset_grid()
+	
+	# Clear all bots
+	for bot in get_bots():
+		if is_instance_valid(bot):
+			bot.queue_free()
+	
+	# Reset bot counts and prices
+	for zone in bot_counts:
+		bot_counts[zone] = 0
+	
+	# Reset base
+	base.reset_base()
+	highest_tier_achieved = -1
+	
+	# Reset coins to starting amount
+	coins = game_config.starting_coins
+	
+	# Spawn initial resources
+	call_deferred("_spawn_initial_resources")
+
+# Level Management Functions (OLD - keeping for now, may remove later)
 
 func _initialize_level_0() -> void:
 	# Create Level 0 (current map)
@@ -598,6 +747,98 @@ func _unlock_level(level_index: int) -> void:
 	
 	# Visual feedback: could add zoom animation here
 	print("Level ", level_index, " unlocked! Map expanded ", pow(2, level_index), "x")
+
+func _populate_stage_upgrade_tab(grid: GridContainer) -> void:
+	var stage_config = progression_config.get_current_stage_config(current_stage)
+	var next_stage_config = progression_config.get_next_stage_config(current_stage)
+	
+	# Current stage info
+	var info_label = Label.new()
+	info_label.text = "Current Stage: " + stage_config.get("stage_name", "Unknown")
+	info_label.add_theme_font_size_override("font_size", 14)
+	grid.add_child(info_label)
+	
+	# Highest tier achieved
+	var tier_label = Label.new()
+	var current_tier_display = maxi(highest_tier_achieved, -1) + 1
+	var max_tier_display = stage_config.get("max_tier", 11) + 1
+	tier_label.text = "Highest Tier: T" + str(current_tier_display) + " / T" + str(max_tier_display)
+	tier_label.add_theme_font_size_override("font_size", 13)
+	grid.add_child(tier_label)
+	
+	# Stage upgrade button (if next stage exists)
+	if next_stage_config != {}:
+		var upgrade_btn = _create_shop_button()
+		upgrade_btn.add_theme_color_override("font_color", Color("#f59e0b"))
+		
+		var next_stage_name = next_stage_config.get("stage_name", "Unknown")
+		var max_tier = stage_config.get("max_tier", 11)
+		
+		if can_upgrade_stage:
+			upgrade_btn.text = "🌟 Upgrade to\n" + next_stage_name
+			upgrade_btn.text += "\n[Ready!]"
+			upgrade_btn.disabled = false
+			upgrade_btn.pressed.connect(_on_upgrade_stage)
+		else:
+			upgrade_btn.text = "🔒 Upgrade to\n" + next_stage_name
+			upgrade_btn.text += "\nRequires: T" + str(max_tier + 1)
+			upgrade_btn.disabled = true
+		
+		_add_tooltip_to_button(upgrade_btn, "Complete reset - new world, new base. All items and progress will be reset.")
+		grid.add_child(upgrade_btn)
+	else:
+		# Final stage reached
+		var final_label = Label.new()
+		final_label.text = "🏆 Final Stage Reached!"
+		final_label.add_theme_font_size_override("font_size", 14)
+		grid.add_child(final_label)
+
+func _populate_debug_tab(grid: GridContainer) -> void:
+	# Debug: Jump to any stage
+	var info_label = Label.new()
+	info_label.text = "DEBUG: Jump to Stage"
+	info_label.add_theme_font_size_override("font_size", 14)
+	grid.add_child(info_label)
+	
+	var current_label = Label.new()
+	current_label.text = "Current: " + progression_config.get_stage_name(current_stage)
+	current_label.add_theme_font_size_override("font_size", 12)
+	grid.add_child(current_label)
+	
+	# Create buttons for each stage
+	var total_stages = progression_config.get_total_stages()
+	for stage_idx in total_stages:
+		var btn = _create_shop_button()
+		btn.add_theme_color_override("font_color", Color("#ef4444"))
+		
+		var stage_name = progression_config.get_stage_name(stage_idx)
+		btn.text = "Stage " + str(stage_idx) + "\n" + stage_name
+		
+		if stage_idx == current_stage:
+			btn.text += "\n[Current]"
+			btn.disabled = true
+		else:
+			btn.pressed.connect(_debug_jump_to_stage.bind(stage_idx))
+		
+		grid.add_child(btn)
+
+func _debug_jump_to_stage(stage_idx: int) -> void:
+	if stage_idx < 0 or stage_idx >= progression_config.get_total_stages():
+		return
+	
+	current_stage = stage_idx
+	
+	# Complete reset
+	_reset_stage()
+	
+	# Initialize new stage
+	_initialize_stage()
+	
+	# Refresh UI
+	_update_ui()
+	_refresh_shop()
+	
+	print("DEBUG: Jumped to stage ", stage_idx, " (", progression_config.get_stage_name(stage_idx), ")")
 
 func _populate_castle_upgrades_tab(grid: GridContainer) -> void:
 	# Map Expansion Upgrades - grouped together, hidden until previous is unlocked

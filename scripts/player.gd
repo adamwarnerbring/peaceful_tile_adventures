@@ -14,6 +14,9 @@ var is_moving := false
 var carried_resource: int = -1
 var grid_ref  # TileGrid
 
+# Scale factor based on grid size (smaller player on larger grids)
+var scale_factor: float = 1.0
+
 func _ready() -> void:
 	target_position = position
 	queue_redraw()
@@ -37,21 +40,31 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _draw() -> void:
+	var body_radius = 18.0 * scale_factor
+	var eye_size = 4.0 * scale_factor
+	var eye_pupil = 2.0 * scale_factor
+	var border_width = 3.0 * scale_factor
+	
 	# Draw player body
-	draw_circle(Vector2.ZERO, 18, Color("#fbbf24"))
-	draw_circle(Vector2.ZERO, 18, Color("#f59e0b"), false, 3.0)
+	draw_circle(Vector2.ZERO, body_radius, Color("#fbbf24"))
+	draw_circle(Vector2.ZERO, body_radius, Color("#f59e0b"), false, border_width)
 	
 	# Draw eyes
-	draw_circle(Vector2(-5, -4), 4, Color.WHITE)
-	draw_circle(Vector2(5, -4), 4, Color.WHITE)
-	draw_circle(Vector2(-5, -4), 2, Color("#1e293b"))
-	draw_circle(Vector2(5, -4), 2, Color("#1e293b"))
+	draw_circle(Vector2(-5 * scale_factor, -4 * scale_factor), eye_size, Color.WHITE)
+	draw_circle(Vector2(5 * scale_factor, -4 * scale_factor), eye_size, Color.WHITE)
+	draw_circle(Vector2(-5 * scale_factor, -4 * scale_factor), eye_pupil, Color("#1e293b"))
+	draw_circle(Vector2(5 * scale_factor, -4 * scale_factor), eye_pupil, Color("#1e293b"))
 	
 	# Draw carried resource indicator
 	if carried_resource >= 0:
 		var carry_color = _get_tier_color(carried_resource)
-		draw_circle(Vector2(0, -28), 10, carry_color)
-		draw_circle(Vector2(0, -28), 10, Color.WHITE, false, 2.0)
+		var carry_size = 10.0 * scale_factor
+		draw_circle(Vector2(0, -28 * scale_factor), carry_size, carry_color)
+		draw_circle(Vector2(0, -28 * scale_factor), carry_size, Color.WHITE, false, 2.0 * scale_factor)
+
+func set_scale_factor(factor: float) -> void:
+	scale_factor = factor
+	queue_redraw()
 
 func move_to(world_pos: Vector2) -> void:
 	target_position = world_pos

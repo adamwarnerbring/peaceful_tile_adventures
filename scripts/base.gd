@@ -4,10 +4,11 @@ extends Node2D
 
 signal resource_deposited(tier: int, slot: int)
 signal resources_merged(new_tier: int)
+signal highest_tier_achieved(tier: int)  # Emitted when a new highest tier is reached
 
 const SLOT_SIZE := 40.0  # Smaller slots to fit more
 const SLOTS_PER_ROW := 4
-const NUM_SLOTS := 12  # Increased tiers: 0-11
+var NUM_SLOTS := 12  # Dynamic based on max_tier (0-11 default)
 const SLOT_SPACING := 4.0  # Less spacing
 const DEPOSIT_DISTANCE := 35.0
 
@@ -16,6 +17,9 @@ var slot_positions: Array[Vector2] = []
 
 # Merge requirements: tier -> required count
 var merge_requirements: Array[int] = []
+
+# Track highest tier achieved (for stage progression)
+var max_tier_reached: int = -1
 
 var tier_colors: Array[Color] = [
 	Color("#4ade80"), Color("#22d3ee"), Color("#3b82f6"), Color("#a855f7"),
@@ -189,6 +193,11 @@ func deposit(tier: int, slot_index: int) -> bool:
 	slot_contents[slot_index] += 1
 	resource_deposited.emit(tier, slot_index)
 	
+	# Track highest tier achieved (even before merging)
+	if tier > max_tier_reached:
+		max_tier_reached = tier
+		highest_tier_achieved.emit(tier)
+	
 	# Cascade merge with variable requirements
 	_cascade_merge(slot_index)
 	
@@ -208,10 +217,22 @@ func _cascade_merge(starting_tier: int) -> void:
 			if new_tier < NUM_SLOTS:
 				slot_contents[new_tier] += 1
 				resources_merged.emit(new_tier)
+				
+				# Track highest tier achieved
+				if new_tier > max_tier_reached:
+					max_tier_reached = new_tier
+					highest_tier_achieved.emit(new_tier)
+				
 				current_tier = new_tier
 			else:
 				# Max tier exceeded
 				resources_merged.emit(new_tier)
+				
+				# Track highest tier achieved
+				if new_tier > max_tier_reached:
+					max_tier_reached = new_tier
+					highest_tier_achieved.emit(new_tier)
+				
 				break
 		else:
 			break
@@ -227,3 +248,26 @@ func get_base_bounds() -> Rect2:
 	var total_rows = ceil(float(NUM_SLOTS) / SLOTS_PER_ROW)
 	var total_height = total_rows * SLOT_SIZE + (total_rows - 1) * SLOT_SPACING + 20
 	return Rect2(global_position + Vector2(-total_width/2, -total_height/2), Vector2(total_width, total_height))
+
+func get_highest_tier_achieved() -> int:
+	return max_tier_reached
+
+func reset_base() -> void:
+	# Reset all slots to empty
+	slot_contents.fill(0)
+	max_tier_reached = -1
+	queue_redraw()
+
+# Set number of slots based on max tier (max_tier + 1, since tiers are 0-indexed)
+func set_num_slots(max_tier: int) -> void:
+	NUM_SLOTS = max_tier + 1
+	slot_contents.resize(NUM_SLOTS)
+	slot_contents.fill(0)
+	_init_merge_requirements()
+	_calculate_slot_positions()
+	
+	# Extend tier colors if needed
+	while tier_colors.size() < NUM_SLOTS:
+		tier_colors.append(Color("#ffffff"))  # Default white for missing colors
+	
+	queue_redraw()

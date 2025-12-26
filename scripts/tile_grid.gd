@@ -4,10 +4,10 @@ extends Node2D
 
 signal zone_unlocked(zone: Zone)
 
-const GRID_SIZE := Vector2i(20, 32)  # Larger grid with finer cells
+var GRID_SIZE := Vector2i(20, 32)  # Grid size (now dynamic per stage)
 const CELL_SIZE := 32  # Finer grid (was 40)
-const BASE_CENTER_X := 10  # Center of base in grid
-const BASE_CENTER_Y := 28  # Base center Y position
+var BASE_CENTER_X := 10  # Center of base in grid (scaled with grid)
+var BASE_CENTER_Y := 28  # Base center Y position (scaled with grid)
 const BASE_RADIUS := 4.5  # Base radius in cells (curved area)
 
 enum Zone { BASE, FOREST, CAVE, CRYSTAL, VOLCANO, ABYSS }
@@ -63,6 +63,38 @@ func _ready() -> void:
 	resource_scene = preload("res://scenes/resource_pickup.tscn")
 	_init_grid()
 	_setup_zones()
+	queue_redraw()
+
+# Initialize grid with specific size (for stage progression)
+func initialize_grid(grid_size: Vector2i) -> void:
+	GRID_SIZE = grid_size
+	# Recalculate base center based on grid size (bottom center, slightly up)
+	BASE_CENTER_X = grid_size.x / 2
+	BASE_CENTER_Y = int(grid_size.y * 0.875)  # 87.5% down from top
+	_init_grid()
+	_setup_zones()
+	queue_redraw()
+
+# Reset grid to starting state (for stage upgrade)
+func reset_grid() -> void:
+	# Clear all resources
+	for x in GRID_SIZE.x:
+		for y in GRID_SIZE.y:
+			if grid_resources[x][y] != null:
+				var resource = grid_resources[x][y]
+				if is_instance_valid(resource):
+					resource.queue_free()
+				grid_resources[x][y] = null
+	
+	# Reset zones (only BASE and FOREST unlocked)
+	unlocked_zones.clear()
+	unlocked_zones[Zone.BASE] = true
+	unlocked_zones[Zone.FOREST] = true
+	unlocked_zones[Zone.CAVE] = false
+	unlocked_zones[Zone.CRYSTAL] = false
+	unlocked_zones[Zone.VOLCANO] = false
+	unlocked_zones[Zone.ABYSS] = false
+	
 	queue_redraw()
 
 func _init_grid() -> void:
@@ -220,7 +252,7 @@ func get_resource_at(grid_pos: Vector2i) -> ResourcePickup:
 		return null
 	return grid_resources[grid_pos.x][grid_pos.y]
 
-func spawn_resource(grid_pos: Vector2i, tier: int = 0) -> bool:
+func spawn_resource(grid_pos: Vector2i, tier: int = 0, scale_factor: float = 1.0) -> bool:
 	if not is_valid_cell(grid_pos):
 		return false
 	if grid_resources[grid_pos.x][grid_pos.y] != null:
@@ -233,11 +265,13 @@ func spawn_resource(grid_pos: Vector2i, tier: int = 0) -> bool:
 	var resource = resource_scene.instantiate()
 	resource.tier = tier
 	resource.position = grid_to_world(grid_pos)
+	if resource.has_method("set_scale_factor"):
+		resource.set_scale_factor(scale_factor)
 	add_child(resource)
 	grid_resources[grid_pos.x][grid_pos.y] = resource
 	return true
 
-func spawn_resource_in_zone(zone: Zone) -> bool:
+func spawn_resource_in_zone(zone: Zone, scale_factor: float = 1.0) -> bool:
 	if zone == Zone.BASE or not is_zone_unlocked(zone):
 		return false
 	
@@ -253,7 +287,7 @@ func spawn_resource_in_zone(zone: Zone) -> bool:
 	var cell = valid_cells[randi() % valid_cells.size()]
 	var tiers = zone_tiers[zone]
 	var tier = tiers[randi() % tiers.size()]
-	return spawn_resource(cell, tier)
+	return spawn_resource(cell, tier, scale_factor)
 
 func remove_resource_at(grid_pos: Vector2i) -> void:
 	if is_valid_cell(grid_pos):
