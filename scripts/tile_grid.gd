@@ -59,21 +59,46 @@ var zone_names: Dictionary = {
 	Zone.ABYSS: "Abyss",
 }
 
+# Zone configuration for current stage
+var zone_configs: Array = []  # Array of ZoneConfig.ZoneDef
+var base_grid_size: Vector2i = Vector2i(20, 32)  # Reference size for zone calculations
+
 func _ready() -> void:
 	resource_scene = preload("res://scenes/resource_pickup.tscn")
+	# Load default zone config if not set
+	if zone_configs.is_empty():
+		zone_configs = ZoneConfig.get_zones_for_stage("Area")
+		_update_zone_names_and_colors()
 	_init_grid()
 	_setup_zones()
 	queue_redraw()
 
-# Initialize grid with specific size (for stage progression)
-func initialize_grid(grid_size: Vector2i) -> void:
+# Initialize grid with specific size and zone config (for stage progression)
+func initialize_grid(grid_size: Vector2i, stage_name: String = "Area") -> void:
 	GRID_SIZE = grid_size
 	# Recalculate base center based on grid size (bottom center, slightly up)
-	BASE_CENTER_X = grid_size.x / 2
+	BASE_CENTER_X = int(grid_size.x / 2.0)  # Explicitly cast to int after float division
 	BASE_CENTER_Y = int(grid_size.y * 0.875)  # 87.5% down from top
+	
+	# Load zone configuration for this stage
+	zone_configs = ZoneConfig.get_zones_for_stage(stage_name)
+	_update_zone_names_and_colors()
+	
 	_init_grid()
 	_setup_zones()
 	queue_redraw()
+
+func _update_zone_names_and_colors() -> void:
+	# Update zone names and colors from zone config
+	for zone_def in zone_configs:
+		var zone_enum = zone_def.zone_id as TileGrid.Zone
+		zone_names[zone_enum] = zone_def.zone_name
+		if zone_def.zone_colors.size() >= 2:
+			zone_colors[zone_enum] = [zone_def.zone_colors[0], zone_def.zone_colors[1]]
+		if zone_def.zone_tiers.size() >= 2:
+			zone_tiers[zone_enum] = [zone_def.zone_tiers[0], zone_def.zone_tiers[1]]
+		if zone_def.base_price > 0:  # Don't overwrite free zones
+			zone_prices[zone_enum] = zone_def.base_price
 
 # Reset grid to starting state (for stage upgrade)
 func reset_grid() -> void:
@@ -109,47 +134,62 @@ func _init_grid() -> void:
 		grid_zones.append(zone_column)
 
 func _setup_zones() -> void:
-	# Setup zones with curved boundaries around base
+	# Setup zones using fixed base grid units
+	# Zones are defined in base_grid_size units and mapped to current grid
+	var scale_x = float(GRID_SIZE.x) / float(base_grid_size.x)
+	var scale_y = float(GRID_SIZE.y) / float(base_grid_size.y)
+	
+	# Base center in base grid units (always at same relative position)
+	var base_center_x_base = float(base_grid_size.x) / 2.0
+	var base_center_y_base = float(base_grid_size.y) * 0.875
+	
 	for x in GRID_SIZE.x:
 		for y in GRID_SIZE.y:
 			var zone: Zone
 			
-			# Calculate distance from base center
-			var dx = x - BASE_CENTER_X
-			var dy = y - BASE_CENTER_Y
+			# Convert current grid position to base grid units
+			var base_x = float(x) / scale_x
+			var base_y = float(y) / scale_y
+			
+			# Calculate distance in base grid units
+			var dx = base_x - base_center_x_base
+			var dy = base_y - base_center_y_base
 			var dist_from_base = sqrt(dx * dx + dy * dy)
 			
-			# Base area (circular)
-			if dist_from_base <= BASE_RADIUS:
+			# Base area (circular, in base grid units)
+			var base_radius_base_units = BASE_RADIUS  # Already in base grid units
+			if dist_from_base <= base_radius_base_units:
 				zone = Zone.BASE
-			# Curved zones based on distance and angle
 			else:
-				# Use distance and angle to create curved boundaries
-				var angle = atan2(dy, dx)  # Angle from base center
-				var normalized_dist = (dist_from_base - BASE_RADIUS) / (GRID_SIZE.y - BASE_RADIUS)
-				
-				# Create curved boundaries
-				# Zones curve outward from base
-				var zone_threshold = _get_zone_threshold(normalized_dist, angle)
-				
-				# Forest moved further from base (was 0.15, now 0.25)
-				if normalized_dist < 0.25:
-					zone = Zone.FOREST
-				elif normalized_dist < 0.45:
-					zone = Zone.CAVE
-				elif normalized_dist < 0.65:
-					zone = Zone.CRYSTAL
-				elif normalized_dist < 0.80:
-					zone = Zone.VOLCANO
-				else:
+				# Find which zone this position belongs to based on zone configs
+				if zone_configs.is_empty():
+					# Fallback if no configs loaded yet
 					zone = Zone.ABYSS
+				else:
+					zone = _get_zone_at_distance(dist_from_base)
 			
 			grid_zones[x][y] = zone
 
-func _get_zone_threshold(dist: float, angle: float) -> float:
-	# Add slight curvature variation based on angle
-	var curve_factor = 1.0 + 0.1 * sin(angle * 3.0)  # Creates wavy boundaries
-	return dist * curve_factor
+func _get_zone_at_distance(distance_base_units: float) -> Zone:
+	# Check zone configs in order to find which zone this distance belongs to
+	# Sort by min_dist to check closest zones first
+	var sorted_configs = zone_configs.duplicate()
+	sorted_configs.sort_custom(func(a, b): return a.shape_data.get("min_dist", 0) < b.shape_data.get("min_dist", 0))
+	
+	for zone_def in sorted_configs:
+		var min_dist = zone_def.shape_data.get("min_dist", 0.0)
+		var max_dist = zone_def.shape_data.get("max_dist", 999.0)
+		
+		if distance_base_units >= min_dist and distance_base_units < max_dist:
+			return zone_def.zone_id as Zone
+	
+	# Fallback to last zone
+	if zone_configs.size() > 0:
+		return zone_configs[-1].zone_id as Zone
+	
+	return Zone.ABYSS
+
+# Removed _get_zone_threshold - using distance-based zones from config now
 
 func _draw() -> void:
 	for x in GRID_SIZE.x:

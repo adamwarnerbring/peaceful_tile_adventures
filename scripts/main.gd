@@ -592,7 +592,8 @@ func _initialize_stage() -> void:
 	var grid_size = stage_config.get("grid_size", Vector2i(20, 32))
 	var max_tier = stage_config.get("max_tier", 11)
 	
-	tile_grid.initialize_grid(grid_size)
+	var stage_name = stage_config.get("stage_name", "Area")
+	tile_grid.initialize_grid(grid_size, stage_name)
 	
 	# Set base inventory size based on max_tier
 	base.set_num_slots(max_tier)
