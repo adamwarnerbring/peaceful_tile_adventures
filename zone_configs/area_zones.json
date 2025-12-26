@@ -1,0 +1,107 @@
+{
+	"stage": "Area",
+	"zones": [
+		{
+			"base_price": 100,
+			"shape_data": {
+				"points": [
+					{
+						"x": 4.0,
+						"y": 23.0
+					},
+					{
+						"x": 6.0,
+						"y": 18.0
+					},
+					{
+						"x": 9.0,
+						"y": 19.0
+					},
+					{
+						"x": 9.0,
+						"y": 23.0
+					}
+				]
+			},
+			"shape_type": 2,
+			"zone_colors": [
+				"14532dff",
+				"437557ff"
+			],
+			"zone_id": 0,
+			"zone_name": "Forest",
+			"zone_tiers": [
+				0,
+				1
+			]
+		},
+		{
+			"base_price": 100,
+			"shape_data": {
+				"points": [
+					{
+						"x": 11.0,
+						"y": 22.0
+					},
+					{
+						"x": 14.0,
+						"y": 24.0
+					},
+					{
+						"x": 12.0,
+						"y": 26.0
+					},
+					{
+						"x": 10.0,
+						"y": 26.0
+					}
+				]
+			},
+			"shape_type": 2,
+			"zone_colors": [
+				"3b0764ff",
+				"623983ff"
+			],
+			"zone_id": 1,
+			"zone_name": "Cave",
+			"zone_tiers": [
+				0,
+				1
+			]
+		},
+		{
+			"base_price": 100,
+			"shape_data": {
+				"points": [
+					{
+						"x": 8.0,
+						"y": 8.0
+					},
+					{
+						"x": 13.0,
+						"y": 8.0
+					},
+					{
+						"x": 13.0,
+						"y": 18.0
+					},
+					{
+						"x": 8.0,
+						"y": 15.0
+					}
+				]
+			},
+			"shape_type": 2,
+			"zone_colors": [
+				"7f1d1dff",
+				"994a4aff"
+			],
+			"zone_id": 3,
+			"zone_name": "Volcano",
+			"zone_tiers": [
+				0,
+				1
+			]
+		}
+	]
+}

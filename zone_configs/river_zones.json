@@ -1,0 +1,115 @@
+{
+	"stage": "River",
+	"zones": [
+		{
+			"base_price": 100,
+			"shape_data": {
+				"points": [
+					{
+						"x": 6.0,
+						"y": 25.0
+					},
+					{
+						"x": 9.0,
+						"y": 21.0
+					},
+					{
+						"x": 18.0,
+						"y": 20.0
+					},
+					{
+						"x": 17.0,
+						"y": 28.0
+					},
+					{
+						"x": 9.0,
+						"y": 29.0
+					}
+				]
+			},
+			"shape_type": 2,
+			"zone_colors": [
+				"14532dff",
+				"437557ff"
+			],
+			"zone_id": 0,
+			"zone_name": "Forest",
+			"zone_tiers": [
+				0,
+				1
+			]
+		},
+		{
+			"base_price": 100,
+			"shape_data": {
+				"points": [
+					{
+						"x": 9.0,
+						"y": 21.0
+					},
+					{
+						"x": 8.0,
+						"y": 19.0
+					},
+					{
+						"x": 16.0,
+						"y": 14.0
+					},
+					{
+						"x": 18.0,
+						"y": 20.0
+					}
+				]
+			},
+			"shape_type": 2,
+			"zone_colors": [
+				"3b0764ff",
+				"623983ff"
+			],
+			"zone_id": 1,
+			"zone_name": "Cave",
+			"zone_tiers": [
+				0,
+				1
+			]
+		},
+		{
+			"base_price": 100,
+			"shape_data": {
+				"points": [
+					{
+						"x": 8.0,
+						"y": 19.0
+					},
+					{
+						"x": 16.0,
+						"y": 14.0
+					},
+					{
+						"x": 14.0,
+						"y": 12.0
+					},
+					{
+						"x": 6.0,
+						"y": 14.0
+					},
+					{
+						"x": 6.0,
+						"y": 14.0
+					}
+				]
+			},
+			"shape_type": 2,
+			"zone_colors": [
+				"083344ff",
+				"395c69ff"
+			],
+			"zone_id": 2,
+			"zone_name": "Crystal",
+			"zone_tiers": [
+				0,
+				1
+			]
+		}
+	]
+}

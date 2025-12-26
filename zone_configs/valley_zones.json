@@ -1,0 +1,43 @@
+{
+	"stage": "Valley",
+	"zones": [
+		{
+			"base_price": 100,
+			"shape_data": {
+				"points": [
+					{
+						"x": 13.0,
+						"y": 32.0
+					},
+					{
+						"x": 10.0,
+						"y": 31.0
+					},
+					{
+						"x": 11.0,
+						"y": 25.0
+					},
+					{
+						"x": 16.0,
+						"y": 25.0
+					},
+					{
+						"x": 17.0,
+						"y": 30.0
+					}
+				]
+			},
+			"shape_type": 2,
+			"zone_colors": [
+				"14532dff",
+				"437557ff"
+			],
+			"zone_id": 0,
+			"zone_name": "Forest",
+			"zone_tiers": [
+				0,
+				1
+			]
+		}
+	]
+}
