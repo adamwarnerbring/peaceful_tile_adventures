@@ -5,7 +5,9 @@ extends Node2D
 signal zone_unlocked(zone: Zone)
 
 var GRID_SIZE := Vector2i(20, 32)  # Grid size (now dynamic per stage)
-const CELL_SIZE := 32  # Finer grid (was 40)
+const BASE_CELL_SIZE := 32.0  # Base cell size in pixels
+const BASE_GRID_SIZE := Vector2i(20, 32)  # Reference grid size
+var CELL_SIZE := 32.0  # Dynamic cell size (becomes smaller as grid expands)
 var BASE_CENTER_X := 10  # Center of base in grid (scaled with grid)
 var BASE_CENTER_Y := 28  # Base center Y position (scaled with grid)
 const BASE_RADIUS := 4.5  # Base radius in cells (curved area)
@@ -76,6 +78,14 @@ func _ready() -> void:
 # Initialize grid with specific size and zone config (for stage progression)
 func initialize_grid(grid_size: Vector2i, stage_name: String = "Area") -> void:
 	GRID_SIZE = grid_size
+	
+	# Calculate cell size to keep total map size roughly constant
+	# If grid expands 1.5x, cells become 1/1.5 = 2/3 the size
+	var scale_factor_x = float(BASE_GRID_SIZE.x) / float(grid_size.x)
+	var scale_factor_y = float(BASE_GRID_SIZE.y) / float(grid_size.y)
+	# Use the smaller scale factor to ensure map fits (maintains aspect ratio better)
+	CELL_SIZE = BASE_CELL_SIZE * min(scale_factor_x, scale_factor_y)
+	
 	# Recalculate base center based on grid size (bottom center, slightly up)
 	BASE_CENTER_X = int(grid_size.x / 2.0)  # Explicitly cast to int after float division
 	BASE_CENTER_Y = int(grid_size.y * 0.875)  # 87.5% down from top
