@@ -176,21 +176,18 @@ func _setup_zones() -> void:
 					# Fallback if no configs loaded yet
 					zone = Zone.ABYSS
 				else:
-					zone = _get_zone_at_distance(dist_from_base)
+					zone = _get_zone_at_position(base_x, base_y, base_center_x_base, base_center_y_base, dist_from_base)
 			
 			grid_zones[x][y] = zone
 
-func _get_zone_at_distance(distance_base_units: float) -> Zone:
-	# Check zone configs in order to find which zone this distance belongs to
-	# Sort by min_dist to check closest zones first
+func _get_zone_at_position(base_x: float, base_y: float, base_center_x: float, base_center_y: float, distance_from_base: float) -> Zone:
+	# Check zone configs to see which zone contains this position
+	# Check in reverse order (farthest first) so closer zones can override
 	var sorted_configs = zone_configs.duplicate()
-	sorted_configs.sort_custom(func(a, b): return a.shape_data.get("min_dist", 0) < b.shape_data.get("min_dist", 0))
+	sorted_configs.sort_custom(func(a, b): return a.shape_data.get("min_dist", 0) > b.shape_data.get("min_dist", 0))
 	
 	for zone_def in sorted_configs:
-		var min_dist = zone_def.shape_data.get("min_dist", 0.0)
-		var max_dist = zone_def.shape_data.get("max_dist", 999.0)
-		
-		if distance_base_units >= min_dist and distance_base_units < max_dist:
+		if _point_in_zone(base_x, base_y, base_center_x, base_center_y, distance_from_base, zone_def):
 			return zone_def.zone_id as Zone
 	
 	# Fallback to last zone
@@ -198,6 +195,66 @@ func _get_zone_at_distance(distance_base_units: float) -> Zone:
 		return zone_configs[-1].zone_id as Zone
 	
 	return Zone.ABYSS
+
+func _point_in_zone(base_x: float, base_y: float, center_x: float, center_y: float, distance: float, zone_def: ZoneConfig.ZoneDef) -> bool:
+	match zone_def.shape_type:
+		ZoneConfig.ShapeType.DISTANCE_LAYERS:
+			# Distance-based rings around center
+			var min_dist = zone_def.shape_data.get("min_dist", 0.0)
+			var max_dist = zone_def.shape_data.get("max_dist", 999.0)
+			return distance >= min_dist and distance < max_dist
+		
+		ZoneConfig.ShapeType.CIRCLE:
+			# Circular zone
+			var center = zone_def.shape_data.get("center", Vector2(center_x, center_y))
+			var radius = zone_def.shape_data.get("radius", 5.0)
+			var dx = base_x - center.x
+			var dy = base_y - center.y
+			var dist_from_center = sqrt(dx * dx + dy * dy)
+			return dist_from_center <= radius
+		
+		ZoneConfig.ShapeType.RECTANGLE:
+			# Rectangular zone
+			var rect = zone_def.shape_data.get("rect", {})
+			var rect_x = rect.get("x", 0.0)
+			var rect_y = rect.get("y", 0.0)
+			var rect_w = rect.get("width", 10.0)
+			var rect_h = rect.get("height", 10.0)
+			# Check if point is within rectangle bounds
+			return base_x >= rect_x and base_x < rect_x + rect_w and \
+				   base_y >= rect_y and base_y < rect_y + rect_h
+		
+		ZoneConfig.ShapeType.POLYGON:
+			# Custom polygon zone
+			var points = zone_def.shape_data.get("points", [])
+			if points.size() < 3:
+				return false
+			return _point_in_polygon(Vector2(base_x, base_y), points)
+		
+		_:
+			# Default to distance-based
+			return false
+
+func _point_in_polygon(point: Vector2, polygon_points: Array) -> bool:
+	# Ray casting algorithm to check if point is inside polygon
+	# Returns true if point is inside the polygon
+	if polygon_points.size() < 3:
+		return false
+	
+	var inside = false
+	var j = polygon_points.size() - 1
+	
+	for i in range(polygon_points.size()):
+		var pi = polygon_points[i] as Vector2
+		var pj = polygon_points[j] as Vector2
+		
+		if ((pi.y > point.y) != (pj.y > point.y)) and \
+		   (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x):
+			inside = not inside
+		
+		j = i
+	
+	return inside
 
 # Removed _get_zone_threshold - using distance-based zones from config now
 
